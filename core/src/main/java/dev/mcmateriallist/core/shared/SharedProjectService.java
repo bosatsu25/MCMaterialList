@@ -21,6 +21,8 @@ public final class SharedProjectService implements AutoCloseable {
     private final CompletableFuture<Void> drained = new CompletableFuture<>();
     private final Object publication = new Object();
     private final AtomicInteger admittedBytes = new AtomicInteger();
+    // Worker-owned durable identities. Unpublishing damaged snapshots never releases admission slots.
+    private final Set<UUID> reservedProjectIds = new HashSet<>();
     private Map<UUID, ProjectArchive> committed = Map.of();
     private volatile UUID world;
     private volatile StoreStatus storageStatus = StoreStatus.MISSING;
@@ -41,6 +43,7 @@ public final class SharedProjectService implements AutoCloseable {
         try {
             SharedProjectStore.Result<SharedProjectStore.World> result = store.openWorld(); storageStatus = result.status();
             if (!result.ok()) { ready.complete(new Ready(result.status(), null)); return; }
+            reservedProjectIds.addAll(result.value().projects());
             world = result.value().namespace(); Map<UUID, ProjectArchive> loaded = new HashMap<>();
             for (UUID id : result.value().projects()) {
                 SharedProjectStore.Result<ProjectArchive> project = store.load(world, id);
@@ -56,7 +59,7 @@ public final class SharedProjectService implements AutoCloseable {
         return submit(() -> {
             if (!initialized) return Reply.of(Status.UNAVAILABLE, null);
             if (actor == null || !world.equals(expectedWorld)) return Reply.of(Status.DENIED, null);
-            synchronized (publication) { if (committed.size() >= SharedLimits.PROJECTS) return Reply.of(Status.CAPACITY, null); }
+            if (reservedProjectIds.size() >= SharedLimits.PROJECTS) return Reply.of(Status.CAPACITY, null);
             final ProjectSnapshot snapshot;
             try {
                 SharedManifest manifest = SharedManifest.initial(definition); Map<TaskId, TaskState> rows = new HashMap<>();
@@ -122,7 +125,13 @@ public final class SharedProjectService implements AutoCloseable {
             Map<TaskId, TaskState> rows = new HashMap<>(); Set<TaskId> recheck = new HashSet<>();
             List<ProjectArchive.Retired> retired = new ArrayList<>(archive.retired());
             for (TaskId id : manifest.taskIds()) {
-                TaskState row = before.rows().getOrDefault(id, TaskState.empty(id)); rows.put(id, row);
+                TaskState row = before.rows().get(id);
+                if (row == null) {
+                    Optional<TaskState> fresh = freshRow(id, archive.retired());
+                    if (fresh.isEmpty()) return Reply.of(Status.CAPACITY, null);
+                    row = fresh.get();
+                }
+                rows.put(id, row);
                 if (before.needsReconfirmation().contains(id)
                     || (row.done() && (id instanceof MaterialTaskId material
                         && !Objects.equals(before.manifest().definition().materials().get(material), definition.materials().get(material))
@@ -139,6 +148,17 @@ public final class SharedProjectService implements AutoCloseable {
             if (!save(new ProjectArchive(archive.generation() + 1, after, retained(archive), retired), archive.generation())) return Reply.of(Status.SAVE_FAILED, null);
             return new Reply<>(Status.OK, after, List.of(new ProjectInvalidated(scope, after.projectRevision(), manifest.version())));
         }, Reply.of(Status.CAPACITY, null), Reply.of(Status.CLOSED, null), definitionBudget(definition));
+    }
+    /** Stable material identities retain only their version watermark, never retired progress. */
+    private static Optional<TaskState> freshRow(TaskId id, List<ProjectArchive.Retired> retired) {
+        long previousVersion = -1;
+        if (id instanceof MaterialTaskId) {
+            for (ProjectArchive.Retired previous : retired) {
+                if (previous.row().taskId().equals(id)) previousVersion = Math.max(previousVersion, previous.row().rowVersion());
+            }
+        }
+        if (previousVersion == Long.MAX_VALUE) return Optional.empty();
+        return Optional.of(new TaskState(id, null, false, "", null, null, previousVersion + 1));
     }
     private Outcome apply(UUID actor, SharedCommand command) {
         Current current = current(command.scope());
@@ -216,6 +236,7 @@ public final class SharedProjectService implements AutoCloseable {
         if (!result.ok()) return false; publish(archive); return true;
     }
     private void publish(ProjectArchive archive) {
+        reservedProjectIds.add(archive.snapshot().scope().projectId());
         synchronized (publication) { Map<UUID, ProjectArchive> next = new HashMap<>(committed); next.put(archive.snapshot().scope().projectId(), archive); committed = Map.copyOf(next); }
     }
     /** Run only a short transport enqueue/send here, never disk I/O, waiting, or reentrant mutation. */

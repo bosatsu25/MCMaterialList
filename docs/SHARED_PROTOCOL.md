@@ -12,6 +12,8 @@ Create initializes every submitted tracked row with empty work. It does not acce
 
 `updateManifest` preserves material rows with the same registry key and region rows with the exact descriptor. Removed rows and their original material count or region mapping are retained in the atomic archive, never guessed onto new rows. An exact descriptor removed and later reintroduced gets a new region UUID. A completed row whose material definition count, digest, or baseline changes remains done and gains `needsReconfirmation`. Explicit successful `SetDone` clears that row's marker, increments its row version even when done already equals the requested value, and publishes the marker in its delta.
 
+A removed and reintroduced material retains its registry-key/list identity but starts with empty assignment, completion and note. Its rowVersion starts one greater than the greatest retired version for that material in the same project archive. The retained rows therefore provide a durable version watermark across repeated removals and restart, without transferring retired progress. A maximum-long watermark rejects reintroduction with CAPACITY rather than wrap or reset. Original retained ACKs remain unchanged on replay and have lower row versions than the fresh row.
+
 ## Service lifecycle and methods
 
 Construct `SharedProjectService(new SharedProjectStore(configuredWorldRoot))` once per server-world lifecycle. The constructor queues startup I/O and returns; `ready()` completes with `Ready(StoreStatus, worldNamespace)`. Do not join this future on the Minecraft thread. Startup loads every identified project into a temporary map and publishes only after all are valid. Corruption, missing-primary-with-backup, future schemas, or unsafe paths leave the service unavailable rather than synthesizing empty work. `storageStatus()` is a content-free diagnostic for the latest store action.
@@ -47,7 +49,7 @@ For every content-bearing send, including every snapshot fragment and delayed AC
 
 Discovery also contains private names: generate and send it using `publishDiscovery(actor, callback)`, which supplies the current authorized summaries under that monitor. Do not send a captured discovery result later without this gate. Deliver internal AccessRevoked only to its specified recipient; its wire form contains only scope. Stop subscriptions and discard incomplete content transfers on revocation, then use the same gate for any content already scheduled. One live service owns connected-client publication; file locks/CAS protect cooperating maintenance writers, but the in-memory publication monitor does not coordinate independent server processes. External administration should use the owning service or stop it before offline recovery.
 
-Clients advance their contiguous delta cursor only from a fixed-revision snapshot or the next consecutive delta. ACK revisions do not advance it; ACK row adoption requires a strictly newer rowVersion. Still complete pending-operation bookkeeping for an ACK when its row was already received through a delta. Invalidation, a gap, unsupported protocol, missing authority, transfer failure/expiry, or changed baseline/digest disables shared writes pending a fresh snapshot. Transport must bound deltas buffered during transfer and abandon/resnapshot on overflow. These consumer rules are documented contracts, not a claim of implemented client session handling in Task 1.
+Clients advance their contiguous delta cursor only from a fixed-revision snapshot or the next consecutive delta. ACK revisions do not advance it; ACK row adoption requires the same complete scope, a row currently present in the installed manifest, and a strictly newer rowVersion. An ACK never recreates a removed row. The material version watermark also prevents an old ACK from replacing empty work after that material is reintroduced. Still complete pending-operation bookkeeping for an ACK when its row was already received through a delta. Invalidation, a gap, unsupported protocol, missing authority, transfer failure/expiry, or changed baseline/digest disables shared writes pending a fresh snapshot. Transport must bound deltas buffered during transfer and abandon/resnapshot on overflow. These consumer rules are documented contracts, not a claim of implemented client session handling in Task 1.
 
 ## Version 1 binary format
 
@@ -88,7 +90,7 @@ These are enforced limits, not measured server performance guarantees:
 
 | Resource | Limit |
 |---|---:|
-| Projects per owned world | 128 |
+| Authoritative project identities per owned world | 128, including damaged/unpublished projects and identities retained only by backup |
 | Current material rows / current region rows | 2000 each |
 | Participants including creator | 20 |
 | Notes / original region keys | 4096 strict UTF-8 bytes each |
@@ -118,3 +120,5 @@ The store takes a cooperating exclusive file lock, reloads the current archive, 
 `load` reports typed `StoreStatus` without paths/data. Missing primary plus valid backup is RECOVERY_REQUIRED, not MISSING. Corrupt primary plus valid backup also requires explicit recovery; corrupt/future data never becomes blank work. `recover(world, project)` and `recoverWorld()` are synchronous administrative/offline methods: after an administrator confirms, they retain damaged primary bytes under a generated name, force them, and restore a validated known-schema backup. Reopen the service after recovery. Normal service startup and reads never invoke recovery. A missing world namespace while project files remain is corrupt, preventing a new namespace from relabelling old projects.
 
 The guarantee is save-before-publication under this flush/atomic-replace scheme, plus restart/CAS/backup behavior tested here. It is not an absolute power-loss guarantee across all operating systems/filesystems. No identities, notes, file paths, account contents, or private project contents are logged by the producer.
+
+The service keeps durable project identity reservations separately from publishable snapshots. Startup reserves every identity inventoried from primary or backup files; successfully committed projects also reserve their identity. A later unavailable/corrupt/recovery-required read removes publication, never the reservation. There is no deletion API in this foundation, so a project slot is never automatically released. This prevents admitting a 129th identity while retaining a damaged project's recovery files; explicit offline recovery and restart retain the same admission count.
