@@ -23,6 +23,10 @@ public final class LocalWorkService implements AutoCloseable {
     public CompletableFuture<RefreshResult> refresh(WorkSnapshot snapshot) {
         return submit(() -> refreshNow(snapshot), () -> failedRefresh(StoreStatus.CLOSED));
     }
+    public CompletableFuture<MaterialRefreshResult> refreshMaterials(WorkSnapshot snapshot) {
+        return submit(() -> refreshMaterialsNow(snapshot),
+            () -> new MaterialRefreshResult(StoreResult.failure(StoreStatus.CLOSED), null));
+    }
     public CompletableFuture<UpdateResult> update(LocalPlacementId placement, TaskId task, TaskCommand command, UUID actor, Instant time) {
         return submit(() -> updateNow(placement, task, command, actor, time), () -> new UpdateResult(StoreResult.failure(StoreStatus.CLOSED), null));
     }
@@ -33,18 +37,10 @@ public final class LocalWorkService implements AutoCloseable {
         return submit(() -> store.recover(placement, kind), () -> StoreResult.failure(StoreStatus.CLOSED));
     }
     private RefreshResult refreshNow(WorkSnapshot snapshot) {
-        StoreResult material = store.load(snapshot.placementId(), DatasetKind.MATERIALS);
+        MaterialRefreshResult material = refreshMaterialsNow(snapshot);
         StoreResult region = store.load(snapshot.placementId(), DatasetKind.REGIONS);
-        Reconciliation<MaterialWorkDataset, MaterialTaskId> materialChanges = null;
         Reconciliation<RegionWorkDataset, RegionTaskId> regionChanges = null;
         // Each side can succeed independently; a corrupt region never resets or blocks valid material work.
-        try {
-            if (material.ok() || material.status() == StoreStatus.MISSING) {
-                MaterialWorkDataset before = material.ok() ? (MaterialWorkDataset) material.dataset() : MaterialWorkDataset.create(snapshot.placementId());
-                materialChanges = before.reconcile(snapshot.materials());
-                if (!material.ok() || materialChanges.dataset() != before) material = store.save(materialChanges.dataset(), material.ok() ? before.generation() : -1);
-            }
-        } catch (IllegalArgumentException | ArithmeticException exception) { material = StoreResult.failure(StoreStatus.INVALID_DEFINITION); }
         try {
             if (region.ok() || region.status() == StoreStatus.MISSING) {
                 RegionWorkDataset before = region.ok() ? (RegionWorkDataset) region.dataset() : RegionWorkDataset.create(snapshot.placementId());
@@ -52,7 +48,22 @@ public final class LocalWorkService implements AutoCloseable {
                 if (!region.ok() || regionChanges.dataset() != before) region = store.save(regionChanges.dataset(), region.ok() ? before.generation() : -1);
             }
         } catch (IllegalArgumentException | ArithmeticException exception) { region = StoreResult.failure(StoreStatus.INVALID_DEFINITION); }
-        return new RefreshResult(material, region, materialChanges, regionChanges);
+        return new RefreshResult(material.storage(), region, material.reconciliation(), regionChanges);
+    }
+    private MaterialRefreshResult refreshMaterialsNow(WorkSnapshot snapshot) {
+        StoreResult stored = store.load(snapshot.placementId(), DatasetKind.MATERIALS);
+        Reconciliation<MaterialWorkDataset, MaterialTaskId> changes = null;
+        try {
+            if (stored.ok() || stored.status() == StoreStatus.MISSING) {
+                MaterialWorkDataset before = stored.ok() ? (MaterialWorkDataset) stored.dataset() : MaterialWorkDataset.create(snapshot.placementId());
+                changes = before.reconcile(snapshot.materials());
+                if (!stored.ok() || changes.dataset() != before)
+                    stored = store.save(changes.dataset(), stored.ok() ? before.generation() : -1);
+            }
+        } catch (IllegalArgumentException | ArithmeticException exception) {
+            stored = StoreResult.failure(StoreStatus.INVALID_DEFINITION);
+        }
+        return new MaterialRefreshResult(stored, changes);
     }
     private UpdateResult updateNow(LocalPlacementId placement, TaskId task, TaskCommand command, UUID actor, Instant time) {
         DatasetKind kind = task instanceof MaterialTaskId ? DatasetKind.MATERIALS : DatasetKind.REGIONS;

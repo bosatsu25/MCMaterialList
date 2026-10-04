@@ -40,7 +40,7 @@ import net.minecraft.world.level.block.Blocks;
 public final class Phase1ClientTest implements FabricClientGameTest {
     private static final Instant TIME = Instant.parse("2026-10-04T00:00:00Z");
     @Override public void runTest(ClientGameTestContext context) {
-        try (var world = context.worldBuilder().create()) {
+        try (var world = FixtureWorlds.create(context, "Phase 1")) {
             world.getClientLevel().waitForChunksRender();
             Path root = Path.of(System.getProperty("mcmateriallist.phase0.fixture")).resolve("phase1");
             Files.createDirectories(root);
@@ -83,6 +83,7 @@ public final class Phase1ClientTest implements FabricClientGameTest {
                 verifyStates(after, actor);
                 var saved = context.computeOnClient(mc -> {
                     var manager = DataManager.getSchematicPlacementManager(); var json = manager.toJson();
+                    check(manager.getAllSchematicsPlacements().size() == 1, "Phase 1 fixture contains unrelated placements");
                     json.addProperty("expectedPlacementCount", manager.getAllSchematicsPlacements().size()); return json;
                 });
                 saved.addProperty("expectedActor", actor.toString());

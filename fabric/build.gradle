@@ -55,7 +55,8 @@ loom.runs {
         inherit clientGameTest
         vmArg '-Dmcmateriallist.phase0.restore=true'
         vmArg "-Dmcmateriallist.phase0.fixture=${layout.buildDirectory.dir('phase0-fixture').get().asFile}"
-        runDir 'build/run/clientGameTestRestore'
+        // A fresh process must read the same durable configuration, not a copied snapshot.
+        runDir 'build/run/clientGameTest'
     }
 }
 tasks.named('runClientGameTestRestore') { mustRunAfter tasks.named('runClientGameTest') }

@@ -41,7 +41,7 @@ import org.lwjgl.glfw.GLFW;
 public final class Phase0ClientTest implements FabricClientGameTest {
     @Override
     public void runTest(ClientGameTestContext context) {
-        try (TestSingleplayerContext world = context.worldBuilder().create()) {
+        try (TestSingleplayerContext world = FixtureWorlds.create(context, "Phase 0")) {
             world.getClientLevel().waitForChunksRender();
             if (Boolean.getBoolean("mcmateriallist.phase0.restore")) {
                 verifyRestart(context);
