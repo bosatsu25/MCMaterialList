@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "mcmateriallist",
+  "version": "${version}",
+  "name": "MCMaterialList",
+  "description": "Phase 0 Litematica compatibility spike",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.mcmateriallist.fabric.MCMaterialList"],
+    "client": ["dev.mcmateriallist.fabric.client.MCMaterialListClient"]
+  },
+  "mixins": [{"config": "mcmateriallist.client.mixins.json", "environment": "client"}],
+  "depends": {
+    "fabricloader": "=0.19.3",
+    "minecraft": "=26.2",
+    "java": ">=25",
+    "fabric-api": "=0.154.0+26.2"
+  },
+  "suggests": {
+    "litematica": "=0.28.3",
+    "malilib": "=0.29.2"
+  }
+}

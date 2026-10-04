@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "dev.mcmateriallist.fabric.test.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": ["GuiBaseTestAccess", "ButtonTestAccess", "MessageRendererTestAccess", "MessageTestAccess", "GuiListTestAccess", "ListTestAccess", "WidgetContainerTestAccess"],
+  "injectors": {"defaultRequire": 1}
+}

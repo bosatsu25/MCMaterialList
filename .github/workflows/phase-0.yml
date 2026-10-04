@@ -1,0 +1,29 @@
+name: Phase 0 compatibility
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: microsoft
+          java-version: '25'
+      - run: chmod +x gradlew
+      - run: ./gradlew --no-daemon clean build
+      - name: Real client restart and isolated dedicated server
+        run: xvfb-run -a ./gradlew --no-daemon verifyPhase0 -PacceptMinecraftEula=true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase-0-test-evidence
+          path: |
+            core/build/test-results/test/*.xml
+            fabric/build/run/clientGameTest/screenshots/*.png
+          if-no-files-found: ignore

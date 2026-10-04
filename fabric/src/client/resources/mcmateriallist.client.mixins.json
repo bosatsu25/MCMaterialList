@@ -1,0 +1,8 @@
+{
+  "required": false,
+  "package": "dev.mcmateriallist.fabric.client.mixin",
+  "plugin": "dev.mcmateriallist.fabric.client.Phase0MixinPlugin",
+  "compatibilityLevel": "JAVA_25",
+  "client": ["MaterialListGuiMixin", "PlacementConfigurationGuiMixin"],
+  "injectors": {"defaultRequire": 0}
+}

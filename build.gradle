@@ -1,0 +1,38 @@
+plugins {
+    id 'base'
+}
+allprojects {
+    group = 'dev.mcmateriallist'
+    version = rootProject.mod_version
+}
+subprojects {
+    apply plugin: 'java-library'
+    repositories { mavenCentral() }
+    java {
+        toolchain { languageVersion = JavaLanguageVersion.of(25) }
+        withSourcesJar()
+    }
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        options.release = 25
+        options.compilerArgs += ['-Xlint:all']
+    }
+    dependencies {
+        testImplementation platform('org.junit:junit-bom:5.14.4')
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+    tasks.withType(Test).configureEach { useJUnitPlatform() }
+    tasks.withType(AbstractArchiveTask).configureEach {
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
+    }
+}
+tasks.named('build') { dependsOn ':core:build', ':fabric:build' }
+tasks.named('clean') { dependsOn ':core:clean', ':fabric:clean' }
+tasks.register('test') { dependsOn ':core:test', ':fabric:test' }
+tasks.register('verifyPhase0') {
+    group = 'verification'
+    description = 'Build, test two real client processes, and boot an isolated dedicated server.'
+    dependsOn 'build', ':fabric:verifyClientRestart', ':fabric:verifyServerSmoke'
+}

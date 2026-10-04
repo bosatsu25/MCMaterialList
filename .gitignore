@@ -1,0 +1,10 @@
+.gradle/
+**/build/
+**/run/
+bin/
+.idea/
+.vscode/
+.claude/
+.codex/
+.github/modernize/
+*.log

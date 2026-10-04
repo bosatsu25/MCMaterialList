@@ -1,0 +1,145 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version '1.17.20'
+}
+repositories {
+    maven {
+        url = 'https://api.modrinth.com/maven'
+        content { includeGroup 'maven.modrinth' }
+    }
+}
+loom {
+    splitEnvironmentSourceSets()
+    mods {
+        mcmateriallist {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+dependencies {
+    minecraft "com.mojang:minecraft:${rootProject.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${rootProject.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_api_version}"
+    implementation project(':core')
+    include project(':core')
+    compileOnly 'com.google.errorprone:error_prone_annotations:2.48.0'
+    clientImplementation 'maven.modrinth:litematica:Yxyi6tlv'
+    clientImplementation 'maven.modrinth:malilib:52cWF5Da'
+}
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') { expand version: project.version }
+}
+
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = 'mcmateriallist-phase0-test'
+        enableGameTests = false
+        enableClientGameTests = true
+    }
+}
+dependencies {
+    gametestImplementation sourceSets.client.output
+    gametestImplementation 'maven.modrinth:litematica:Yxyi6tlv'
+    gametestImplementation 'maven.modrinth:malilib:52cWF5Da'
+    gametestCompileOnly 'com.google.errorprone:error_prone_annotations:2.48.0'
+}
+loom.runs.clientGameTest {
+    vmArg "-Dmcmateriallist.phase0.restore=${providers.gradleProperty('phase0Restore').getOrElse('false')}"
+    vmArg "-Dmcmateriallist.phase0.fixture=${layout.buildDirectory.dir('phase0-fixture').get().asFile}"
+}
+
+loom.runs {
+    clientGameTestRestore {
+        inherit clientGameTest
+        vmArg '-Dmcmateriallist.phase0.restore=true'
+        vmArg "-Dmcmateriallist.phase0.fixture=${layout.buildDirectory.dir('phase0-fixture').get().asFile}"
+        runDir 'build/run/clientGameTestRestore'
+    }
+}
+tasks.named('runClientGameTestRestore') { mustRunAfter tasks.named('runClientGameTest') }
+tasks.register('verifyClientRestart') {
+    group = 'verification'
+    description = 'Test both GUIs, then restore the same placement in a fresh Minecraft process.'
+    dependsOn 'runClientGameTest', 'runClientGameTestRestore'
+}
+
+sourceSets {
+    serverSmoke {
+        compileClasspath += sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.runtimeClasspath
+    }
+}
+configurations {
+    serverSmokeImplementation.extendsFrom implementation
+    serverSmokeRuntimeOnly.extendsFrom runtimeOnly
+}
+dependencies {
+    serverSmokeImplementation sourceSets.main.output
+}
+loom.mods {
+    'mcmateriallist-server-smoke' { sourceSet sourceSets.serverSmoke }
+}
+loom.runs {
+    serverSmoke {
+        server()
+        source sourceSets.serverSmoke
+        runDir 'build/run/serverSmoke'
+        vmArg '-Xmx1G'
+        vmArg '-Xlog:class+load=info:file=class-load.log'
+    }
+}
+tasks.register('prepareServerSmoke') {
+    doLast {
+        if (!providers.gradleProperty('acceptMinecraftEula').map { it == 'true' }.getOrElse(false)) {
+            throw new GradleException('Pass -PacceptMinecraftEula=true only after accepting the Minecraft EULA.')
+        }
+        def directory = layout.buildDirectory.dir('run/serverSmoke').get().asFile
+        directory.mkdirs()
+        new File(directory, 'eula.txt').text = 'eula=true\n'
+        new File(directory, 'server.properties').text = 'server-ip=localhost\nserver-port=0\nonline-mode=false\nlevel-name=phase0-test-world\nview-distance=2\nsimulation-distance=2\n'
+    }
+}
+tasks.named('runServerSmoke') { dependsOn 'prepareServerSmoke' }
+tasks.register('verifyServerSmoke') {
+    group = 'verification'
+    description = 'Boot a dedicated server without Litematica/MaLiLib and inspect actual class loading.'
+    dependsOn 'runServerSmoke'
+    doLast {
+        def directory = layout.buildDirectory.dir('run/serverSmoke').get().asFile
+        def loaded = new File(directory, 'class-load.log').text
+        for (String forbidden : ['fi.dy.masa.', 'net.minecraft.client.', 'dev.mcmateriallist.fabric.client.']) {
+            if (loaded.contains(forbidden)) throw new GradleException('Dedicated server loaded a forbidden client class: ' + forbidden)
+        }
+        def log = new File(directory, 'logs/latest.log').text
+        if (!log.contains('Phase 0 dedicated server isolation PASS') || !log.contains('MCMaterialList Phase 0 common initialized')) {
+            throw new GradleException('Dedicated server did not reach the initialization/isolation checkpoint.')
+        }
+    }
+}
+
+tasks.register('verifyIsolation') {
+    group = 'verification'
+    dependsOn 'classes', ':core:classes'
+    doLast {
+        def checks = [
+            [project(':core').sourceSets.main.output.classesDirs, ['net/minecraft/', 'net/fabricmc/', 'fi/dy/masa/']],
+            [sourceSets.main.output.classesDirs, ['net/minecraft/client/', 'fi/dy/masa/', 'dev/mcmateriallist/fabric/client/']]
+        ]
+        checks.each { directories, forbidden ->
+            directories.asFileTree.matching { include '**/*.class' }.each { compiled ->
+                def constants = new String(compiled.bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+                forbidden.each { prefix ->
+                    if (constants.contains(prefix)) throw new GradleException('Forbidden dependency in common/core bytecode: ' + prefix)
+                }
+            }
+        }
+        configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+            if (artifact.moduleVersion.id.group == 'maven.modrinth') {
+                throw new GradleException('Optional client mod leaked into server runtime classpath.')
+            }
+        }
+    }
+}
+tasks.named('check') { dependsOn 'verifyIsolation' }
