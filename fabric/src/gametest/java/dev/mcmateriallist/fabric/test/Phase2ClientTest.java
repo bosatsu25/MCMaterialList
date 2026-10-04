@@ -44,7 +44,7 @@ public final class Phase2ClientTest implements FabricClientGameTest {
         Blocks.CHISELED_DEEPSLATE, Blocks.WOOL.pick(DyeColor.GRAY), Blocks.STONE, Blocks.GLASS, Blocks.DIRT,
         Blocks.COBBLESTONE, Blocks.SANDSTONE, Blocks.GRANITE, Blocks.ANDESITE, Blocks.DIORITE};
     @Override public void runTest(ClientGameTestContext context) {
-        try (var world = context.worldBuilder().create()) {
+        try (var world = FixtureWorlds.create(context, "Phase 2A")) {
             world.getClientLevel().waitForChunksRender();
             Path root = Path.of(System.getProperty("mcmateriallist.phase0.fixture")).resolve("phase2");
             Files.createDirectories(root);
@@ -153,7 +153,11 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             context.runOnClient(mc -> check(placement.isEnabled() && placement.isRenderingEnabled(), "Completion disabled placement"));
             check(!Files.exists(primary.resolveSibling("regions.json")), "Material screen created region work");
             check(Arrays.equals(schematicBytes, Files.readAllBytes(placement.getSchematicFile())), "Material UI modified .litematic bytes");
-            var saved = context.computeOnClient(mc -> DataManager.getSchematicPlacementManager().toJson());
+            var saved = context.computeOnClient(mc -> {
+                var manager = DataManager.getSchematicPlacementManager();
+                check(manager.getAllSchematicsPlacements().size() == 1, "Phase 2 fixture contains unrelated placements");
+                return manager.toJson();
+            });
             saved.addProperty("expectedPlacement", placement.getHashId().toString());
             Files.writeString(root.resolve("placement.json"), saved.toString());
             var current = context.computeOnClient(mc -> session((GuiMaterialList) mc.gui.screen())); idle(context, current);
@@ -291,6 +295,7 @@ public final class Phase2ClientTest implements FabricClientGameTest {
         var json = JsonParser.parseString(Files.readString(root.resolve("placement.json"))).getAsJsonObject();
         var placement = context.computeOnClient(mc -> {
             var manager = DataManager.getSchematicPlacementManager(); manager.loadFromJson(json);
+            check(manager.getAllSchematicsPlacements().size() == 1, "Phase 2 restart contains unrelated placements");
             return manager.getAllSchematicsPlacements().stream().filter(candidate -> candidate.getHashId().toString().equals(json.get("expectedPlacement").getAsString())).findFirst().orElseThrow();
         });
         context.waitFor(mc -> SchematicWorldHandler.getSchematicWorld().getBlockState(placement.getOrigin()).is(BLOCKS[0]));
