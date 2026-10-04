@@ -99,6 +99,8 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             context.getInput().typeChars("採掘担当");
             context.getInput().pressKey(GLFW.GLFW_KEY_ENTER);
             context.getInput().typeChars("倉庫に保管");
+            click(context, context.computeOnClient(mc -> button(detail, "Claim"))); idle(context, session);
+            check(session.state(blackstone).note().isEmpty() && context.computeOnClient(mc -> ((MaterialDetailTestAccess) detail).phase2Note().getValueWrapper()).equals("採掘担当\n倉庫に保管"), "Material Claim implicitly saved or discarded note draft");
             click(context, context.computeOnClient(mc -> button(detail, "Save note"))); idle(context, session);
             check(session.state(blackstone).note().equals("採掘担当\n倉庫に保管"), "Multiline UTF-8 note was not saved");
             click(context, context.computeOnClient(mc -> button(detail, "Release"))); idle(context, session);
@@ -261,6 +263,20 @@ public final class Phase2ClientTest implements FabricClientGameTest {
         click(context, context.computeOnClient(mc -> button(recoveryScreen, "Confirm recovery"))); idle(context, recovery);
         check(recovery.dataset().progress().equals(new Progress(4, 19, 21)), "Explicit backup recovery lost reference progress");
         context.takeScreenshot("phase2-explicit-recovery");
+        var recovered = recovery.dataset();
+        byte[] secondDamage = "{ second material incident".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Files.write(primary, secondDamage);
+        click(context, context.computeOnClient(mc -> button(recoveryScreen, "Refresh work")));
+        context.waitFor(mc -> !recovery.pending() && recovery.status() == StoreStatus.RECOVERY_REQUIRED);
+        check(recovery.dataset().equals(recovered), "Second material incident changed confirmed state");
+        click(context, context.computeOnClient(mc -> ((GuiBaseTestAccess) recoveryScreen).phase0Buttons().stream()
+            .filter(candidate -> List.of("Recover backup", "Confirm recovery").contains(ChatFormatting.stripFormatting(((ButtonTestAccess) candidate).phase0Text())))
+            .findFirst().orElseThrow()));
+        context.waitFor(mc -> !recovery.pending());
+        check(Arrays.equals(secondDamage, Files.readAllBytes(primary)), "Second material recovery first click changed damaged primary without fresh confirmation");
+        click(context, context.computeOnClient(mc -> button(recoveryScreen, "Confirm recovery"))); idle(context, recovery);
+        check(recovery.dataset().equals(recovered), "Second material recovery changed exact state");
+        context.takeScreenshot("phase2-materials-second-recovery");
     }
     private static long countFiles(Path directory, String prefix, String suffix) throws java.io.IOException {
         if (!Files.isDirectory(directory)) return 0;

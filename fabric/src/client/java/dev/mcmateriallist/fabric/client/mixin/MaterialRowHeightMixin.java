@@ -16,5 +16,8 @@ public abstract class MaterialRowHeightMixin {
     private void expandedMaterialHeight(Object entry, CallbackInfoReturnable<Integer> callback) {
         if ((Object) this instanceof WidgetListMaterialList list && entry instanceof MaterialListEntry
             && ((MaterialWorkScreen) ((MaterialListWidgetAccess) list).mcmateriallist$screen()).mcmateriallist$session().showInfo()) callback.setReturnValue(40);
+        if ((Object) this instanceof fi.dy.masa.litematica.gui.widgets.WidgetListPlacementSubRegions regions
+            && entry instanceof fi.dy.masa.litematica.schematic.placement.SubRegionPlacement
+            && ((dev.mcmateriallist.fabric.client.region.RegionWorkScreen) regions.getParentGui()).mcmateriallist$session().showInfo()) callback.setReturnValue(40);
     }
 }

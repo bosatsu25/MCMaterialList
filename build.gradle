@@ -43,6 +43,6 @@ tasks.register('verifyPhase1') {
 }
 tasks.register('verifyPhase2') {
     group = 'verification'
-    description = 'Run Phase 0/1 regressions, durable material UI interactions and fresh-process restoration, plus server isolation.'
+    description = 'Run Phase 0/1 regressions, durable material and region UI interactions and fresh-process restoration, plus server isolation.'
     dependsOn 'verifyPhase1'
 }

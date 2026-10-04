@@ -86,7 +86,10 @@ public final class MaterialWorkSession {
         if (status == StoreStatus.RECOVERY_REQUIRED) {
             recoverButton = addToolbar(x, text(recoveryConfirmed ? "confirm_recovery" : "recover"), (button, mouse) -> {
                 if (!recoveryConfirmed) { recoveryConfirmed = true; screen.addMessage(MessageType.WARNING, text("recovery_warning")); screen.initGui(); }
-                else if (!pending && ready()) await(MCMaterialListClient.work().recover(placement, DatasetKind.MATERIALS), this::publish);
+                else if (!pending && ready()) {
+                    recoveryConfirmed = false;
+                    await(MCMaterialListClient.work().recover(placement, DatasetKind.MATERIALS), this::publish);
+                }
             });
         } else if (confirmed != null && !confirmed.archived().isEmpty()) {
             addToolbar(x, text("archived", confirmed.archived().size()), (button, mouse) -> GuiBase.openGui(new MaterialArchiveScreen(screen, this)));
@@ -142,6 +145,7 @@ public final class MaterialWorkSession {
     public void detail(MaterialTaskId id, String name) { GuiBase.openGui(new MaterialDetailScreen(screen, this, id, name)); }
     private void publish(StoreResult result) {
         status = result.status();
+        if (status != StoreStatus.RECOVERY_REQUIRED) recoveryConfirmed = false;
         if (result.ok() && result.dataset() instanceof MaterialWorkDataset dataset) confirmed = dataset;
         // Preserve the last confirmed view on errors. Never display a recovery candidate as current.
         if (!result.ok() && status != StoreStatus.MISSING) feedbackTarget().addMessage(MessageType.ERROR, text("storage", status.name()));

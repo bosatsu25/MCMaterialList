@@ -28,7 +28,9 @@ public final class MaterialDetailScreen extends GuiBase {
         if (note != null) draft = note.getValueWrapper();
         super.initGui(); actions.clear();
         int width = Math.max(80, Math.min(460, getScreenWidth() - 24));
-        note = new GuiTextFieldMultiLine.Builder().setX(12).setY(112).setWidth(width).setHeight(Math.max(32, Math.min(90, getScreenHeight() - 180))).setBackground(true).setScrollbar(true).build(font, draft);
+        note = new GuiTextFieldMultiLine.Builder().setX(12).setY(112).setWidth(width).setHeight(Math.max(32, Math.min(90, getScreenHeight() - 180))).setBackground(true).setScrollbar(true).build(font, "");
+        // Builder's string is a message/hint, not an initial editable value.
+        note.setValueWrapper(draft);
         addTextFieldMultiLine(note, TextLimits.NOTE_BYTES, field -> { draft = field.getValueWrapper(); return true; });
         int x = 12;
         for (String key : new String[]{"claim", "release", "save_note"}) {
