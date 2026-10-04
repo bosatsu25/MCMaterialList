@@ -6,6 +6,9 @@ import dev.mcmateriallist.core.work.*;
 import dev.mcmateriallist.fabric.client.MCMaterialListClient;
 import dev.mcmateriallist.fabric.client.material.MaterialPresentation;
 import dev.mcmateriallist.fabric.client.work.PlacementWorkAdapter;
+import dev.mcmateriallist.fabric.client.work.WorkScreenGeometry;
+import dev.mcmateriallist.fabric.client.mixin.GuiButtonsAccess;
+import fi.dy.masa.malilib.render.RenderUtils;
 import fi.dy.masa.litematica.gui.GuiPlacementConfiguration;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
@@ -27,6 +30,7 @@ public final class RegionWorkSession {
     private StoreStatus status;
     private boolean pending, loaded, showInfo, hideDone, recoveryConfirmed;
     private ButtonGeneric refreshButton, recoverButton;
+    private int toolbarStart, toolbarWidth, toolbarY;
     public RegionWorkSession(GuiPlacementConfiguration screen) {
         this.screen = screen;
         var capture = PlacementWorkAdapter.captureRegions(screen.getSchematicPlacement());
@@ -39,6 +43,10 @@ public final class RegionWorkSession {
     public boolean pending() { return pending; }
     public boolean showInfo() { return showInfo; }
     public boolean hideDone() { return hideDone; }
+    public boolean compact() {
+        return WorkScreenGeometry.compact(screen.getScreenWidth(), screen.getScreenHeight())
+            && status != StoreStatus.RECOVERY_REQUIRED && (confirmed == null || confirmed.archived().isEmpty());
+    }
     public TaskState state(RegionTaskId id) { return confirmed == null || id == null ? null : confirmed.states().get(id); }
     public boolean review(RegionTaskId id) { return confirmed != null && id != null && confirmed.activeReviewRequired().contains(id); }
     /** Resolve by exact original descriptor; ambiguity remains unavailable, never guessed. */
@@ -66,6 +74,12 @@ public final class RegionWorkSession {
     }
     public void toolbar() {
         if (!loaded && ready()) { loaded = true; await(MCMaterialListClient.work().load(placement, DatasetKind.REGIONS), this::publish); }
+        toolbarStart = compact() ? 18 + screen.getStringWidth(fi.dy.masa.malilib.util.StringUtils.translate("litematica.gui.label.schematic_placement.sub_regions", screen.getSchematicPlacement().getSubRegionCount())) : 12;
+        int end = compact() ? ((GuiButtonsAccess) screen).mcmateriallist$buttons().stream().filter(button -> button.getY() == 44 && button.getX() > toolbarStart)
+            .mapToInt(button -> button.getX()).min().orElse(screen.getScreenWidth() - 154) : screen.getScreenWidth() - 148;
+        int slots = status == StoreStatus.RECOVERY_REQUIRED || (confirmed != null && !confirmed.archived().isEmpty()) ? 4 : 3;
+        toolbarWidth = Math.max(20, (end - toolbarStart) / (compact() ? 3 : slots) - 2);
+        toolbarY = compact() ? 44 : 64;
         refreshButton = add(0, text(status == StoreStatus.MISSING ? "track" : "refresh"), (button, mouse) -> refresh());
         add(1, text("hide_done", hideDone ? "ON" : "OFF"), (button, mouse) -> { hideDone = !hideDone; screen.initGui(); });
         add(2, text("show_info", showInfo ? "ON" : "OFF"), (button, mouse) -> { showInfo = !showInfo; screen.initGui(); });
@@ -84,8 +98,7 @@ public final class RegionWorkSession {
         renderControls();
     }
     private ButtonGeneric add(int slot, String label, IButtonActionListener action) {
-        int width = Math.max(20, (screen.getScreenWidth() - 168) / 4);
-        var button = new ButtonGeneric(12 + slot * (width + 2), 64, width, 20, MaterialPresentation.clamp(label, width - 8));
+        var button = new ButtonGeneric(toolbarStart + slot * (toolbarWidth + 2), toolbarY, toolbarWidth, 20, MaterialPresentation.clamp(label, toolbarWidth - 8));
         button.setHoverStrings(label); return screen.addButton(button, action);
     }
     private void renderControls() {
@@ -95,7 +108,12 @@ public final class RegionWorkSession {
     public void footer(GuiContext ctx) {
         renderControls();
         String progress = confirmed == null ? text("untracked") : text("progress", confirmed.progress().completed(), confirmed.progress().total(), confirmed.progress().percentage());
-        screen.drawString(ctx, MaterialPresentation.clamp(progress + "  " + feedback(), Math.max(0, screen.getScreenWidth() - 280)), 120, screen.getScreenHeight() - 39, 0xFFFFFFFF);
+        if (confirmed != null) progress = dev.mcmateriallist.core.ui.WorkProgressPresentation.style(progress, confirmed.progress());
+        int x = compact() ? 120 : 12;
+        int y = screen.getScreenHeight() - (compact() ? 17 : 60);
+        String value = MaterialPresentation.clamp(progress + "  " + feedback(), Math.max(0, screen.getScreenWidth() - x - 140));
+        RenderUtils.drawRect(ctx, x - 2, y - 2, screen.getStringWidth(value) + 4, 12, 0xFF1D2027);
+        screen.drawString(ctx, value, x, y, 0xFFFFFFFF);
     }
     public void refresh() {
         if (pending || !ready()) return;

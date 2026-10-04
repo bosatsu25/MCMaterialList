@@ -36,7 +36,7 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
             if (Boolean.getBoolean("mcmateriallist.phase0.restore")) { restore(context, root); return; }
             var placement = context.computeOnClient(mc -> fixture(root, mc.player.blockPosition().above(5)));
             context.getInput().resizeWindow(1920, 1080);
-            context.runOnClient(mc -> { mc.options.guiScale().set(2); mc.resizeGui(); });
+            context.runOnClient(mc -> { mc.options.guiScale().set(3); mc.resizeGui(); });
             context.setScreen(() -> new GuiPlacementConfiguration(placement));
             var screen = context.computeOnClient(mc -> (GuiPlacementConfiguration) mc.gui.screen());
             var work = context.computeOnClient(mc -> session(screen));
@@ -46,6 +46,15 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
             check(!Files.exists(primary) && !Files.exists(primary.resolveSibling("materials.json")), "Opening region UI wrote work");
             context.runOnClient(mc -> check(PlacementWorkAdapter.captureRegions(placement).status() == PlacementWorkAdapter.Status.OK, "Region capture incorrectly requires materials"));
             click(context, context.computeOnClient(mc -> button(screen, "Track regions"))); idle(context, work);
+            context.runOnClient(mc -> {
+                var list = (ListTestAccess) ((GuiListTestAccess) screen).phase0List();
+                check(mc.getWindow().getGuiScaledWidth() == 640 && mc.getWindow().getGuiScaledHeight() == 360, "Region baseline must be 1920x1080 GUI3");
+                check(list.phase0Y() == 62, "Region work toolbar still consumes a baseline list row");
+                check(button(screen, "Hide Done: OFF").getY() == 44 && button(screen, "Show Info: OFF").getY() == 44, "Region filters do not share the baseline header");
+                UiParityEvidence.controls(screen);
+                var ordered = ((GuiListTestAccess) screen).phase0List().getCurrentEntries();
+                for (int i = 0; i < 11; i++) check(ordered.get(i) instanceof fi.dy.masa.litematica.schematic.placement.SubRegionPlacement region && region.getName().equals("Region " + (i + 1)), "Reference natural region order differs");
+            });
             var delivered = new java.util.concurrent.atomic.AtomicBoolean();
             var armed = new java.util.concurrent.atomic.AtomicBoolean(true);
             context.runOnClient(mc -> net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
@@ -62,8 +71,28 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
             }
             check(work.dataset().progress().equals(new Progress(5, 62, 8)), "Reference progress differs");
             check(placement.getAllSubRegionsPlacements().stream().allMatch(p -> p.isEnabled()), "Completion changed enabled flags");
-            context.takeScreenshot("phase2-regions-5-of-62");
+            context.runOnClient(mc -> { mc.options.guiScale().set(4); mc.resizeGui(); }); context.waitTick();
+            context.runOnClient(mc -> UiParityEvidence.controls(screen));
+            context.runOnClient(mc -> { mc.options.guiScale().set(3); mc.resizeGui(); }); context.waitTick();
+            // Only notice presence is known from the reference; these reasons are synthetic.
+            for (int number : new int[]{1, 4, 5, 7, 11})
+                saveReferenceNote(context, screen, work, number, "Synthetic reference notice: Region " + number);
+            verifyReferenceNotices(context, screen);
+            UiParityEvidence.capture(context, screen, "phase2-regions-5-of-62");
+            UiParityEvidence.color(context, "phase2-regions-5-of-62", 120, 343, 220, 9, 0xFF5555);
+            UiParityEvidence.color(context, "phase2-regions-5-of-62", 120, 343, 40, 9, 0xFFFFFF);
             verifyReferenceMarks(context, screen);
+            var reference = work.dataset();
+            for (int number : new int[]{1, 4, 5, 7, 11}) {
+                UiParityEvidence.notice(context, "phase2-regions-5-of-62", context.computeOnClient(mc -> notices(screen, "Region " + number).getFirst()));
+                click(context, context.computeOnClient(mc -> notices(screen, "Region " + number).getFirst()));
+                context.waitForScreen(RegionDetailScreen.class);
+                check(context.computeOnClient(mc -> ((RegionDetailTestAccess) mc.gui.screen()).phase2Id()).equals(work.id("Region " + number)), "Reference notice hit opened the wrong region identity");
+                click(context, context.computeOnClient(mc -> button((GuiBase) mc.gui.screen(), "Back")));
+            }
+            check(work.dataset().equals(reference), "Reference notice hits changed exact region state");
+            // The independent unsaved-draft regression must still start with an empty saved note.
+            saveReferenceNote(context, screen, work, 1, "");
             click(context, context.computeOnClient(mc -> rowButton(screen, "Region 1", RegionHeadButton.class)));
             context.waitForScreen(RegionDetailScreen.class);
             var detail = context.computeOnClient(mc -> (GuiBase) mc.gui.screen());
@@ -85,6 +114,16 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
             click(context, context.computeOnClient(mc -> button(screen, "Hide Done: OFF")));
             check(((GuiListTestAccess) screen).phase0List().getCurrentEntries().size() == 57 && work.dataset().progress().equals(new Progress(5, 62, 8)), "Hide Done changed denominator");
             click(context, context.computeOnClient(mc -> button(screen, "Hide Done: ON")));
+            var beforeScroll = work.dataset();
+            UiParityEvidence.scroll(context, screen, -100);
+            check(context.computeOnClient(mc -> ((GuiListTestAccess) screen).phase0List().getScrollbar().getValue()) > 0, "Real region scrolling did not move the view");
+            click(context, context.computeOnClient(mc -> rowButton(screen, "Region 62", RegionHeadButton.class))); context.waitForScreen(RegionDetailScreen.class);
+            check(context.computeOnClient(mc -> ((RegionDetailTestAccess) mc.gui.screen()).phase2Id()).equals(work.id("Region 62")), "Scrolled region head resolved wrong identity");
+            click(context, context.computeOnClient(mc -> button((GuiBase) mc.gui.screen(), "Back")));
+            UiParityEvidence.scroll(context, screen, 100);
+            check(work.dataset().equals(beforeScroll), "Region scrolling/details changed exact state");
+            UiParityEvidence.recreation(context, screen, true);
+            check(work.dataset().equals(beforeScroll), "Selected/scrolled layout recreation changed exact region state");
             click(context, context.computeOnClient(mc -> button(screen, "Show Info: OFF")));
             context.runOnClient(mc -> {
                 var rows = ((ListTestAccess) ((GuiListTestAccess) screen).phase0List()).phase0Rows();
@@ -115,6 +154,37 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
             var reopened = context.computeOnClient(mc -> session((GuiPlacementConfiguration) mc.gui.screen())); idle(context, reopened);
             check(work.dataset().equals(reopened.dataset()) && Arrays.equals(persisted, Files.readAllBytes(primary)), "Region reopen changed storage");
         } catch (java.io.IOException failure) { throw new AssertionError("Region fixture failed", failure); }
+    }
+    private static void saveReferenceNote(ClientGameTestContext context, GuiPlacementConfiguration screen, RegionWorkSession work, int number, String value) {
+        String key = "Region " + number;
+        var before = work.state(work.id(key));
+        click(context, context.computeOnClient(mc -> rowButton(screen, key, RegionHeadButton.class)));
+        context.waitForScreen(RegionDetailScreen.class);
+        var detail = context.computeOnClient(mc -> (GuiBase) mc.gui.screen());
+        check(context.computeOnClient(mc -> ((RegionDetailTestAccess) detail).phase2Id()).equals(work.id(key)), "Synthetic reference note opened the wrong task");
+        var field = context.computeOnClient(mc -> ((RegionDetailTestAccess) detail).phase2Note());
+        clickNote(context, field);
+        int length = context.computeOnClient(mc -> field.getValueWrapper().length());
+        context.getInput().pressKey(GLFW.GLFW_KEY_END);
+        for (int i = 0; i < length; i++) context.getInput().pressKey(GLFW.GLFW_KEY_BACKSPACE);
+        if (!value.isEmpty()) context.getInput().typeChars(value);
+        click(context, context.computeOnClient(mc -> button(detail, "Save note"))); idle(context, work);
+        check(work.state(work.id(key)).equals(new TaskState(before.taskId(), before.assignee(), before.done(), value, before.completedBy(), before.completedAt(), before.rowVersion() + 1)), "Synthetic reference note changed completion/ownership metadata or missed its exact note");
+        check(work.dataset().progress().equals(new Progress(5, 62, 8)), "Synthetic reference note changed progress");
+        click(context, context.computeOnClient(mc -> button(detail, "Back")));
+    }
+    private static void verifyReferenceNotices(ClientGameTestContext context, GuiPlacementConfiguration screen) {
+        context.runOnClient(mc -> {
+            for (int number = 1; number <= 11; number++) {
+                var bubbles = notices(screen, "Region " + number);
+                boolean expected = List.of(1, 4, 5, 7, 11).contains(number);
+                String reason = "Synthetic reference notice: Region " + number;
+                check(bubbles.size() == (expected ? 1 : 0), "Reference region notice presence differs: Region " + number);
+                if (expected) check(bubbles.getFirst().getHoverStrings().stream().anyMatch(text -> text.contains(reason))
+                    && ((NativeNoticeTestAccess) bubbles.getFirst()).phase2Icon() == fi.dy.masa.litematica.gui.Icons.NOTICE_EXCLAMATION_11,
+                    "Reference region notice lacks its explicit synthetic reason/native sprite");
+            }
+        });
     }
     private static void verifyReferenceMarks(ClientGameTestContext context, GuiPlacementConfiguration screen) throws java.io.IOException {
         Path screenshot;
@@ -162,9 +232,10 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
         context.runOnClient(mc -> {
             var notices = notices(screen, "Region 2");
             check(notices.size() == 1 && notices.getFirst().getHoverStrings().stream().anyMatch(value -> value.contains(modified) && value.contains("変更と完了を確認")), "AC07 combined notice missing standard/note reasons");
+            check(((NativeNoticeTestAccess) notices.getFirst()).phase2Icon() == fi.dy.masa.litematica.gui.Icons.NOTICE_EXCLAMATION_11, "Region combined notice does not use native bubble");
             check(work.state(work.id("Region 2")).done(), "AC07 notice changed done");
         });
-        context.takeScreenshot("phase2-regions-notice-coexist");
+        UiParityEvidence.capture(context, screen, "phase2-regions-notice-coexist");
         click(context, context.computeOnClient(mc -> notices(screen, "Region 2").getFirst()));
         context.waitForScreen(RegionDetailScreen.class);
         var note = context.computeOnClient(mc -> ((RegionDetailTestAccess) mc.gui.screen()).phase2Note());
@@ -180,7 +251,8 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
             check(notices(screen, "Region 2").size() == 1, "AC07 deletion removed or duplicated notice");
             check(notices(screen, "Region 2").getFirst().getHoverStrings().contains(modified), "AC07 deletion removed standard explanation");
         });
-        context.takeScreenshot("phase2-regions-notice-after-note-delete");
+        UiParityEvidence.capture(context, screen, "phase2-regions-notice-after-note-delete");
+        UiParityEvidence.notice(context, "phase2-regions-notice-after-note-delete", context.computeOnClient(mc -> notices(screen, "Region 2").getFirst()));
         var beforeTransforms = work.dataset();
         for (String label : List.of("Rotation", "Mirror")) {
             click(context, context.computeOnClient(mc -> buttonContaining(screen, label)));
@@ -201,6 +273,16 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
         click(context, search); context.getInput().typeChars("Region 62");
         context.waitFor(mc -> ((GuiListTestAccess) screen).phase0List().getCurrentEntries().size() == 1);
         check(work.dataset().progress().equals(new Progress(5, 62, 8)), "Search changed denominator");
+        for (int scale : new int[]{4, 3}) {
+            context.runOnClient(mc -> { mc.options.guiScale().set(scale); mc.resizeGui(); }); context.waitTick();
+            context.runOnClient(mc -> {
+                UiParityEvidence.controls(screen);
+                var filtered = ((GuiListTestAccess) screen).phase0List();
+                check(filtered.getSearchBarWidget().isSearchOpen() && filtered.getSearchBarWidget().getFilter().equals("region 62")
+                    && ((dev.mcmateriallist.fabric.client.mixin.SearchBoxAccess) filtered.getSearchBarWidget()).mcmateriallist$searchBox().getTextWrapper().equals("Region 62")
+                    && filtered.getCurrentEntries().size() == 1 && work.dataset().equals(beforeTransforms), "Region layout recreation lost native search/state");
+            });
+        }
         context.getInput().pressKey(GLFW.GLFW_KEY_ESCAPE);
         context.waitFor(mc -> ((GuiListTestAccess) screen).phase0List().getCurrentEntries().size() == 62);
         context.runOnClient(mc -> { var list = ((GuiListTestAccess) screen).phase0List(); list.getScrollbar().setValue(0); list.refreshEntries(); });
@@ -212,9 +294,13 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
         check(!oldId.equals(nextId) && work.review(nextId) && work.state(nextId).equals(TaskState.empty(nextId)) && work.dataset().archived().get(oldId).state().note().equals("建築担当\n屋根を確認"), "Definition mismatch transferred old work");
         click(context, context.computeOnClient(mc -> rowButton(screen, "Region 1", RegionDoneButton.class))); context.waitTick();
         check(!work.state(nextId).done() && !work.pending(), "Pending review allowed completion");
-        click(context, context.computeOnClient(mc -> button(screen, "Archived work (1)"))); context.waitForScreen(RegionArchiveScreen.class);
+        context.runOnClient(mc -> { mc.options.guiScale().set(4); mc.resizeGui(); }); context.waitTick();
+        context.runOnClient(mc -> UiParityEvidence.controls(screen));
+        UiParityEvidence.capture(context, screen, "phase2-regions-narrow-archive-toolbar");
+        click(context, context.computeOnClient(mc -> UiParityEvidence.workControl(screen, "archived", 1))); context.waitForScreen(RegionArchiveScreen.class);
         context.takeScreenshot("phase2-regions-archive");
         click(context, context.computeOnClient(mc -> button((GuiBase) mc.gui.screen(), "Back")));
+        context.runOnClient(mc -> { mc.options.guiScale().set(3); mc.resizeGui(); }); context.waitTick();
         click(context, context.computeOnClient(mc -> rowButton(screen, "Region 1", RegionHeadButton.class))); context.waitForScreen(RegionDetailScreen.class);
         context.takeScreenshot("phase2-regions-definition-review");
         click(context, context.computeOnClient(mc -> button((GuiBase) mc.gui.screen(), "Accept new definition"))); idle(context, work);
@@ -238,12 +324,19 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
         context.setScreen(() -> new GuiPlacementConfiguration(placement));
         var recovery = context.computeOnClient(mc -> session((GuiPlacementConfiguration) mc.gui.screen()));
         context.waitFor(mc -> !recovery.pending() && recovery.status() == StoreStatus.RECOVERY_REQUIRED);
+        context.runOnClient(mc -> UiParityEvidence.controls((GuiBase) mc.gui.screen()));
         check(recovery.dataset() == null && !recovery.writable(), "Region backup was presented as current");
         context.setScreen(() -> screen);
-        click(context, context.computeOnClient(mc -> button(screen, "Recover backup")));
+        context.runOnClient(mc -> { mc.options.guiScale().set(4); mc.resizeGui(); }); context.waitTick();
+        context.runOnClient(mc -> UiParityEvidence.controls(screen));
+        UiParityEvidence.capture(context, screen, "phase2-regions-narrow-recovery-toolbar");
+        click(context, context.computeOnClient(mc -> UiParityEvidence.workControl(screen, "recover")));
         check(Arrays.equals(damaged, Files.readAllBytes(primary)), "First recovery click changed region storage");
-        click(context, context.computeOnClient(mc -> button(screen, "Confirm recovery"))); idle(context, work);
-        click(context, context.computeOnClient(mc -> button(screen, "Refresh work"))); idle(context, work);
+        context.runOnClient(mc -> UiParityEvidence.controls(screen));
+        click(context, context.computeOnClient(mc -> UiParityEvidence.workControl(screen, "confirm_recovery"))); idle(context, work);
+        context.runOnClient(mc -> UiParityEvidence.controls(screen));
+        click(context, context.computeOnClient(mc -> UiParityEvidence.workControl(screen, "refresh"))); idle(context, work);
+        context.runOnClient(mc -> { mc.options.guiScale().set(3); mc.resizeGui(); }); context.waitTick();
         check(work.dataset().progress().equals(new Progress(5, 62, 8)) && work.id("Region 1").equals(oldId), "Explicit region recovery/refresh changed progress or identity");
         context.takeScreenshot("phase2-regions-explicit-recovery");
         var recovered = work.dataset();
@@ -252,22 +345,37 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
         click(context, context.computeOnClient(mc -> button(screen, "Refresh work")));
         context.waitFor(mc -> !work.pending() && work.status() == StoreStatus.RECOVERY_REQUIRED);
         check(work.dataset().equals(recovered), "Second region incident changed confirmed state");
+        context.runOnClient(mc -> { mc.options.guiScale().set(4); mc.resizeGui(); }); context.waitTick();
+        context.runOnClient(mc -> UiParityEvidence.controls(screen));
         click(context, context.computeOnClient(mc -> ((GuiBaseTestAccess) screen).phase0Buttons().stream()
-            .filter(candidate -> List.of("Recover backup", "Confirm recovery").contains(ChatFormatting.stripFormatting(((ButtonTestAccess) candidate).phase0Text())))
+            .filter(candidate -> candidate.getHoverStrings().stream().anyMatch(List.of(RegionWorkSession.text("recover"), RegionWorkSession.text("confirm_recovery"))::contains))
             .findFirst().orElseThrow()));
         context.waitFor(mc -> !work.pending());
         check(Arrays.equals(secondDamage, Files.readAllBytes(primary)), "Second region recovery first click changed damaged primary without fresh confirmation");
-        click(context, context.computeOnClient(mc -> button(screen, "Confirm recovery"))); idle(context, work);
-        click(context, context.computeOnClient(mc -> button(screen, "Refresh work"))); idle(context, work);
+        click(context, context.computeOnClient(mc -> UiParityEvidence.workControl(screen, "confirm_recovery"))); idle(context, work);
+        click(context, context.computeOnClient(mc -> UiParityEvidence.workControl(screen, "refresh"))); idle(context, work);
+        context.runOnClient(mc -> { mc.options.guiScale().set(3); mc.resizeGui(); }); context.waitTick();
         check(work.dataset().equals(recovered), "Second region recovery changed exact state");
         context.takeScreenshot("phase2-regions-second-recovery");
         check(Arrays.equals(materialBytes, Files.readAllBytes(primary.resolveSibling("materials.json"))), "Region operations rewrote material snapshot");
         Files.write(primary.getParent().resolveSibling("region-material-baseline.bin"), materialBytes);
     }
-    private static List<ButtonBase> notices(GuiPlacementConfiguration screen, String key) { return ((WidgetContainerTestAccess) row(screen, key)).phase0Children().stream().filter(widget -> widget instanceof ButtonBase button && "!".equals(ChatFormatting.stripFormatting(((ButtonTestAccess) button).phase0Text()))).map(widget -> (ButtonBase) widget).toList(); }
+    private static List<ButtonBase> notices(GuiPlacementConfiguration screen, String key) { return ((WidgetContainerTestAccess) row(screen, key)).phase0Children().stream().filter(widget -> widget instanceof dev.mcmateriallist.fabric.client.work.WorkNoticeButton && ((ButtonTestAccess) widget).phase2Enabled()).map(widget -> (ButtonBase) widget).toList(); }
     private static ButtonBase rowLabel(GuiPlacementConfiguration screen, String key, String label) { return ((WidgetContainerTestAccess) row(screen, key)).phase0Children().stream().filter(widget -> widget instanceof ButtonBase button && label.equals(ChatFormatting.stripFormatting(((ButtonTestAccess) button).phase0Text()))).map(widget -> (ButtonBase) widget).findFirst().orElseThrow(); }
     private static ButtonBase rowContaining(GuiPlacementConfiguration screen, String key, String label) { return ((WidgetContainerTestAccess) row(screen, key)).phase0Children().stream().filter(widget -> widget instanceof ButtonBase button && ChatFormatting.stripFormatting(((ButtonTestAccess) button).phase0Text()).contains(label)).map(widget -> (ButtonBase) widget).findFirst().orElseThrow(); }
     private static ButtonBase buttonContaining(GuiBase screen, String label) { return ((GuiBaseTestAccess) screen).phase0Buttons().stream().filter(button -> ChatFormatting.stripFormatting(((ButtonTestAccess) button).phase0Text()).contains(label)).findFirst().orElseThrow(() -> new AssertionError("Missing upstream button: " + label)); }
+    private static void verifyNarrowFilters(ClientGameTestContext context, GuiPlacementConfiguration screen, RegionWorkSession work) {
+        var before = work.dataset();
+        for (String key : List.of("hide_done", "show_info")) {
+            boolean value = key.equals("hide_done") ? work.hideDone() : work.showInfo();
+            click(context, context.computeOnClient(mc -> UiParityEvidence.workControl(screen, key, value ? "ON" : "OFF")));
+            check((key.equals("hide_done") ? work.hideDone() : work.showInfo()) != value, "Localized narrow filter hit missed its actual handler");
+            context.runOnClient(mc -> UiParityEvidence.controls(screen));
+            click(context, context.computeOnClient(mc -> UiParityEvidence.workControl(screen, key, value ? "OFF" : "ON")));
+            check((key.equals("hide_done") ? work.hideDone() : work.showInfo()) == value, "Localized narrow filter did not restore its session state");
+        }
+        check(work.dataset().equals(before), "Localized narrow filter hits changed exact region work");
+    }
     private static void verifyScaledNames(ClientGameTestContext context, GuiPlacementConfiguration screen, SchematicPlacement placement) throws java.io.IOException {
         String key = "非常に長い日本語の領域名でも担当と完了と既存の操作が重ならない".repeat(5);
         var longPlacement = context.computeOnClient(mc -> {
@@ -303,14 +411,16 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
                 var configure = rowLabel(longScreen, key, "Configure");
                 var toggle = rowContaining(longScreen, key, "Placement:");
                 check(head.getWidth() == 16 && head.getX() + 16 <= done.getX() && done.getX() + done.getWidth() <= configure.getX() && configure.getX() + configure.getWidth() <= toggle.getX() && toggle.getX() + toggle.getWidth() <= row.getX() + row.getWidth(), "Scaled fallback/name row controls overlap");
-                var toolbar = ((GuiBaseTestAccess) longScreen).phase0Buttons().stream().filter(control -> control.getY() == 64 && control.getHoverStrings().stream().anyMatch(List.of("Refresh work", "Hide Done: OFF", "Show Info: OFF")::contains)).toList();
+                var toolbar = ((GuiBaseTestAccess) longScreen).phase0Buttons().stream().filter(control -> control.getHoverStrings().stream().anyMatch(List.of("Refresh work", "Hide Done: OFF", "Show Info: OFF")::contains)).toList();
                 check(toolbar.size() == 3, "Scaled region toolbar control missing");
+                UiParityEvidence.controls(longScreen);
+                for (var control : toolbar) check(control.getY() == (scale <= 3 ? 44 : 64), "Scaled toolbar did not choose its compact/narrow position");
                 for (var control : toolbar) check(control.getX() >= 0 && control.getX() + control.getWidth() <= longScreen.getScreenWidth() - 140, "Scaled toolbar overlaps upstream sidebar");
             });
             click(context, context.computeOnClient(mc -> rowButton(longScreen, key, RegionDoneButton.class))); idle(context, longWork);
             check(longWork.state(longWork.id(key)).done() == (scale % 2 == 1), "Scaled completion click missed long name");
             check(workUnchanged(screen, new Progress(5, 62, 8)), "Another placement mixed work");
-            context.takeScreenshot("phase2-regions-japanese-name-scale-" + scale);
+            UiParityEvidence.capture(context, longScreen, "phase2-regions-japanese-name-scale-" + scale);
         }
         context.getInput().resizeWindow(1280, 720);
         context.runOnClient(mc -> { mc.options.guiScale().set(4); mc.resizeGui(); }); context.waitTick();
@@ -319,17 +429,32 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
             var done = rowButton(longScreen, key, RegionDoneButton.class);
             var configure = rowLabel(longScreen, key, "Configure");
             check(head.getX() + head.getWidth() <= done.getX() && done.getX() + done.getWidth() <= configure.getX(), "Narrow GUI overlaps work/upstream controls");
+            UiParityEvidence.controls(longScreen);
+            check(((ListTestAccess) ((GuiListTestAccess) longScreen).phase0List()).phase0Y() + ((ListTestAccess) ((GuiListTestAccess) longScreen).phase0List()).phase0Height() <= longScreen.getScreenHeight() - 62, "Narrow list occupies the reserved readable progress line");
         });
+        verifyNarrowFilters(context, longScreen, longWork);
         click(context, context.computeOnClient(mc -> rowButton(longScreen, key, RegionDoneButton.class))); idle(context, longWork);
         check(longWork.state(longWork.id(key)).done(), "Narrow long-name completion click missed");
-        context.takeScreenshot("phase2-regions-narrow-japanese-name");
+        UiParityEvidence.capture(context, longScreen, "phase2-regions-narrow-japanese-name");
         context.getInput().resizeWindow(1920, 1080);
         context.runOnClient(mc -> {
             DataManager.getSchematicPlacementManager().removeSchematicPlacement(longPlacement);
-            mc.options.guiScale().set(2); mc.resizeGui();
+            mc.options.guiScale().set(3); mc.resizeGui();
         });
         context.setScreen(() -> screen);
         context.runOnClient(mc -> { var list = ((GuiListTestAccess) screen).phase0List(); list.getScrollbar().setValue(0); list.refreshEntries(); });
+        var beforeLanguage = session(screen).dataset();
+        UiParityEvidence.language(context, screen, "ja_jp");
+        context.runOnClient(mc -> {
+            UiParityEvidence.controls(screen);
+            check(RegionWorkSession.text("show_info", "OFF").equals("補足情報: OFF"), "Native Japanese region translation unavailable");
+        });
+        context.runOnClient(mc -> { mc.options.guiScale().set(4); mc.resizeGui(); }); context.waitTick();
+        verifyNarrowFilters(context, screen, session(screen));
+        context.runOnClient(mc -> { mc.options.guiScale().set(3); mc.resizeGui(); }); context.waitTick();
+        UiParityEvidence.capture(context, screen, "phase2-regions-japanese-ui");
+        check(session(screen).dataset().equals(beforeLanguage), "Native language reload changed region IDs/state");
+        UiParityEvidence.language(context, screen, "en_us");
     }
     private static boolean workUnchanged(GuiPlacementConfiguration screen, Progress progress) { return session(screen).dataset().progress().equals(progress); }
     private static RegionWorkSession session(GuiPlacementConfiguration screen) { return ((RegionWorkScreen) screen).mcmateriallist$session(); }

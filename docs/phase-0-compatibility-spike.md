@@ -99,3 +99,5 @@ gradlew clean verifyPhase0 -PacceptMinecraftEula=true --warning-mode all
 - [GuiMaterialList](https://github.com/sakura-ryoko/litematica/blob/26.2-0.28.3/src/main/java/fi/dy/masa/litematica/gui/GuiMaterialList.java)
 - [GuiPlacementConfiguration](https://github.com/sakura-ryoko/litematica/blob/26.2-0.28.3/src/main/java/fi/dy/masa/litematica/gui/GuiPlacementConfiguration.java)
 - [Fabric automated testing](https://docs.fabricmc.net/develop/automatic-testing)
+
+後続状態: この文書の実行結果・段階0の境界は当時の記録。固定版での2画面の日本語・倍率・狭い画面・実操作の追加検証は [Phase 2C](phase-2-litematica-ui.md) に記録する。元画像のフォント・リソースパック・プレイヤーの正体は未確定のまま。

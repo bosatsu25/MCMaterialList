@@ -3,6 +3,7 @@ package dev.mcmateriallist.fabric.client.mixin;
 import dev.mcmateriallist.core.ui.MaterialRowLayout;
 import dev.mcmateriallist.core.work.*;
 import dev.mcmateriallist.fabric.client.material.*;
+import dev.mcmateriallist.fabric.client.work.WorkNoticeButton;
 import fi.dy.masa.litematica.gui.widgets.WidgetMaterialListEntry;
 import fi.dy.masa.litematica.gui.widgets.WidgetListMaterialList;
 import fi.dy.masa.litematica.materials.MaterialListEntry;
@@ -27,7 +28,7 @@ public abstract class MaterialRowMixin extends WidgetListEntrySortable<MaterialL
     @Unique private MaterialTaskId mcmateriallist$id;
     @Unique private MaterialHeadButton mcmateriallist$head;
     @Unique private MaterialDoneButton mcmateriallist$done;
-    @Unique private ButtonGeneric mcmateriallist$notice;
+    @Unique private WorkNoticeButton mcmateriallist$notice;
     protected MaterialRowMixin() { super(0, 0, 0, 0, null, 0); }
     @Inject(method = "<init>", at = @At("TAIL"), require = 1)
     private void addMaterialWork(CallbackInfo callback) {
@@ -43,8 +44,7 @@ public abstract class MaterialRowMixin extends WidgetListEntrySortable<MaterialL
             var state = mcmateriallist$work.state(mcmateriallist$id);
             if (state != null) mcmateriallist$work.command(mcmateriallist$id, new TaskCommand.SetDone(!state.done()));
         });
-        mcmateriallist$notice = addButton(new ButtonGeneric(x + mcmateriallist$layout.noticeX(), y + 4, 12, 14, "§e!"), (button, mouse) -> mcmateriallist$work.detail(mcmateriallist$id, entry.getStack().getHoverName().getString()));
-        mcmateriallist$notice.setRenderDefaultBackground(false);
+        mcmateriallist$notice = addButton(new WorkNoticeButton(x + mcmateriallist$layout.noticeX(), y + 4), (button, mouse) -> mcmateriallist$work.detail(mcmateriallist$id, entry.getStack().getHoverName().getString()));
     }
     @Inject(method = "getColumnPosX", at = @At("HEAD"), cancellable = true, require = 1)
     private void workColumns(int column, CallbackInfoReturnable<Integer> callback) {
@@ -66,13 +66,12 @@ public abstract class MaterialRowMixin extends WidgetListEntrySortable<MaterialL
         var state = mcmateriallist$work.state(mcmateriallist$id);
         boolean notice = state != null && (!state.note().isEmpty() || mcmateriallist$work.changed(mcmateriallist$id)) || mcmateriallist$work.status() != null
             && mcmateriallist$work.status() != dev.mcmateriallist.core.persistence.StoreStatus.OK && mcmateriallist$work.status() != dev.mcmateriallist.core.persistence.StoreStatus.MISSING;
-        mcmateriallist$notice.setDisplayString(notice ? "§e!" : "");
-        mcmateriallist$notice.setEnabled(notice);
+        mcmateriallist$notice.setNotice(notice);
     }
     @Inject(method = "render", at = @At("TAIL"), require = 1)
     private void drawWorkInfo(GuiContext ctx, int mouseX, int mouseY, boolean selected, CallbackInfo callback) {
         if (mcmateriallist$id != null && mcmateriallist$work.showInfo())
-            drawString(ctx, x + 44, y + 26, 0xFFBBBBBB, MaterialPresentation.clamp(MaterialPresentation.info(mcmateriallist$work.state(mcmateriallist$id)), Math.max(0, width - 48)));
+            drawString(ctx, x + 44, y + 26, 0xFFBBBBBB, MaterialPresentation.clamp(MaterialPresentation.info(mcmateriallist$work.state(mcmateriallist$id)), Math.max(0, mcmateriallist$layout.noticeX() - 48)));
     }
     @Inject(method = "postRenderHovered", at = @At("HEAD"), cancellable = true, require = 1)
     private void workTooltip(GuiContext ctx, int mouseX, int mouseY, boolean selected, CallbackInfo callback) {

@@ -4,6 +4,18 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class MaterialRowLayoutTest {
+    @Test void wideRowsKeepQuantitiesNearTheBoundedNameInsteadOfRightActions() {
+        var row = MaterialRowLayout.fit(1000, 30, 40, 50, 44).orElseThrow();
+        assertEquals(192, row.nameWidth());
+        assertEquals(244, row.totalX());
+        assertEquals(298, row.missingX());
+        assertEquals(362, row.availableX());
+        assertEquals(24, row.missingX() - (row.totalX() + 30));
+        assertEquals(24, row.availableX() - (row.missingX() + 40));
+        assertEquals(920, row.noticeX());
+        assertEquals(934, row.doneX());
+        assertTrue(row.availableX() + 50 + 24 <= row.noticeX());
+    }
     @Test void reservesDistinctHeadItemCountsAndRightActions() {
         var row = MaterialRowLayout.fit(500, 30, 40, 50, 44).orElseThrow();
         assertEquals(228, row.totalX());
