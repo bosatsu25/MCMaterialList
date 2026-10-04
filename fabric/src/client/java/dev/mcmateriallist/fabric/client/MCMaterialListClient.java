@@ -11,6 +11,7 @@ public final class MCMaterialListClient implements ClientModInitializer {
     public static LocalWorkService work() { return work; }
     @Override
     public void onInitializeClient() {
+        dev.mcmateriallist.fabric.client.shared.SharedClientNetworking.initialize();
         var logger = LoggerFactory.getLogger("mcmateriallist");
         if (Compatibility.isSupported()) {
             work = new LocalWorkService(FabricLoader.getInstance().getConfigDir().resolve("mcmateriallist"));
