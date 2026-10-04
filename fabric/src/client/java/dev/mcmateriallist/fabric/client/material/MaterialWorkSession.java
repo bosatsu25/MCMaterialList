@@ -121,10 +121,7 @@ public final class MaterialWorkSession {
     public void footer(GuiContext ctx) {
         renderControls();
         String progress = confirmed == null ? text("untracked") : text("progress", confirmed.progress().completed(), confirmed.progress().total(), confirmed.progress().percentage());
-        if (confirmed != null && confirmed.progress().completed() < confirmed.progress().total()) {
-            String fraction = confirmed.progress().completed() + " / " + confirmed.progress().total() + " (" + confirmed.progress().percentage() + "%)";
-            progress = progress.replace(fraction, "\u00a7c" + fraction + "\u00a7r");
-        }
+        if (confirmed != null) progress = dev.mcmateriallist.core.ui.WorkProgressPresentation.style(progress, confirmed.progress());
         int y = screen.getScreenHeight() - (compact() ? 46 : 72);
         String value = MaterialPresentation.clamp(progress + "  " + feedback(), Math.max(0, screen.getScreenWidth() - 24));
         RenderUtils.drawRect(ctx, 10, y - 2, screen.getStringWidth(value) + 4, 12, 0xFF1D2027);

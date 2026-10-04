@@ -107,10 +107,7 @@ public final class RegionWorkSession {
     public void footer(GuiContext ctx) {
         renderControls();
         String progress = confirmed == null ? text("untracked") : text("progress", confirmed.progress().completed(), confirmed.progress().total(), confirmed.progress().percentage());
-        if (confirmed != null && confirmed.progress().completed() < confirmed.progress().total()) {
-            String fraction = confirmed.progress().completed() + " / " + confirmed.progress().total() + " (" + confirmed.progress().percentage() + "%)";
-            progress = progress.replace(fraction, "\u00a7c" + fraction + "\u00a7r");
-        }
+        if (confirmed != null) progress = dev.mcmateriallist.core.ui.WorkProgressPresentation.style(progress, confirmed.progress());
         int x = compact() ? 120 : 12;
         int y = screen.getScreenHeight() - (compact() ? 17 : 60);
         String value = MaterialPresentation.clamp(progress + "  " + feedback(), Math.max(0, screen.getScreenWidth() - x - 140));

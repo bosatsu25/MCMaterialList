@@ -179,6 +179,8 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             click(context, context.computeOnClient(mc -> button((GuiBase) mc.gui.screen(), "Back")));
             UiParityEvidence.scroll(context, screen, 100);
             check(session.dataset().equals(beforeScroll), "Scrolling/details changed exact material state");
+            UiParityEvidence.recreation(context, screen, false);
+            check(session.dataset().equals(beforeScroll), "Selected/scrolled layout recreation changed exact material state");
             var header = context.computeOnClient(mc -> ((ListTestAccess) ((GuiListTestAccess) screen).phase0List()).phase0Rows().getFirst());
             int[] sortPoint = context.computeOnClient(mc -> new int[]{((MaterialRowTestAccess) header).phase2Column(0) + 8, header.getY() + 10});
             clickAt(context, sortPoint[0], sortPoint[1]);

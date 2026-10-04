@@ -104,6 +104,8 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
             click(context, context.computeOnClient(mc -> button((GuiBase) mc.gui.screen(), "Back")));
             UiParityEvidence.scroll(context, screen, 100);
             check(work.dataset().equals(beforeScroll), "Region scrolling/details changed exact state");
+            UiParityEvidence.recreation(context, screen, true);
+            check(work.dataset().equals(beforeScroll), "Selected/scrolled layout recreation changed exact region state");
             click(context, context.computeOnClient(mc -> button(screen, "Show Info: OFF")));
             context.runOnClient(mc -> {
                 var rows = ((ListTestAccess) ((GuiListTestAccess) screen).phase0List()).phase0Rows();

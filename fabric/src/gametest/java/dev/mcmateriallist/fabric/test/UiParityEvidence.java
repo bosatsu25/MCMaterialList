@@ -89,6 +89,51 @@ final class UiParityEvidence {
         }
         throw new AssertionError("Real wheel events did not reach list boundary");
     }
+    static void recreation(ClientGameTestContext context, GuiBase screen, boolean selectable) {
+        double[] wheelPoint = context.computeOnClient(mc -> {
+            var row = ((ListTestAccess) ((GuiListTestAccess) screen).phase0List()).phase0Rows().stream()
+                .filter(candidate -> candidate.getEntry() != null).findFirst().orElseThrow();
+            return new double[]{(row.getX() + 60.0) * mc.getWindow().getScreenWidth() / mc.getWindow().getGuiScaledWidth(),
+                (row.getY() + 10.0) * mc.getWindow().getScreenHeight() / mc.getWindow().getGuiScaledHeight()};
+        });
+        context.getInput().setCursorPos(wheelPoint[0], wheelPoint[1]); context.waitTick();
+        context.getInput().scroll(-1); context.waitTick();
+        var original = context.computeOnClient(mc -> ((GuiListTestAccess) screen).phase0List());
+        int scroll = context.computeOnClient(mc -> original.getScrollbar().getValue());
+        require(scroll > 0, "Recreation fixture requires genuine nonzero wheel scroll");
+        var target = context.computeOnClient(mc -> ((ListTestAccess) original).phase0Rows().stream()
+            .filter(candidate -> candidate.getEntry() != null).skip(1).findFirst().orElseThrow());
+        Object entry = context.computeOnClient(mc -> target.getEntry());
+        double[] clickPoint = context.computeOnClient(mc -> new double[]{(target.getX() + 60.0) * mc.getWindow().getScreenWidth() / mc.getWindow().getGuiScaledWidth(),
+            (target.getY() + 10.0) * mc.getWindow().getScreenHeight() / mc.getWindow().getGuiScaledHeight()});
+        context.getInput().setCursorPos(clickPoint[0], clickPoint[1]); context.waitTick();
+        context.getInput().pressMouse(org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT); context.waitTick();
+        int selectionIndex = context.computeOnClient(mc -> ((ListTestAccess) original).phase2SelectionIndex());
+        String selectedRegion = context.computeOnClient(mc -> screen instanceof fi.dy.masa.litematica.gui.GuiPlacementConfiguration regions
+            ? regions.getSchematicPlacement().getSelectedSubRegionName() : null);
+        context.runOnClient(mc -> require(selectable ? original.getLastSelectedEntry() == entry && selectionIndex >= 0
+            : original.getLastSelectedEntry() == null && selectionIndex == -1,
+            "Real row hit did not retain native selectability"));
+        if (selectable) require(selectedRegion != null, "Real region selection did not update its native placement owner");
+        var previous = original;
+        for (int scale : new int[]{4, 3}) {
+            context.runOnClient(mc -> { mc.options.guiScale().set(scale); mc.resizeGui(); }); context.waitTick();
+            var current = context.computeOnClient(mc -> ((GuiListTestAccess) screen).phase0List());
+            require(current != previous, "Scale change did not recreate the immutable-position native list");
+            context.runOnClient(mc -> {
+                require(current.getScrollbar().getValue() == scroll, "Recreation lost nonzero native scrollbar position");
+                require(selectable ? current.getLastSelectedEntry() == entry && ((ListTestAccess) current).phase2SelectionIndex() == selectionIndex
+                    : current.getLastSelectedEntry() == null && ((ListTestAccess) current).phase2SelectionIndex() == -1,
+                    "Recreation lost native single selection or invented material selection");
+                require(current.getSelectedEntries().isEmpty(), "Recreation changed native single-select semantics");
+                if (screen instanceof fi.dy.masa.litematica.gui.GuiPlacementConfiguration regions)
+                    require(java.util.Objects.equals(selectedRegion, regions.getSchematicPlacement().getSelectedSubRegionName()), "Recreation toggled the owning placement selection");
+                controls(screen);
+            });
+            previous = current;
+        }
+        scroll(context, screen, 100);
+    }
     static void language(ClientGameTestContext context, GuiBase screen, String language) {
         var reload = context.computeOnClient(mc -> { mc.getLanguageManager().setSelected(language); return mc.reloadResourcePacks(); });
         context.waitFor(mc -> reload.isDone()); reload.join();
