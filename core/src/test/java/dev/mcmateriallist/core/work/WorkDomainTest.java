@@ -100,6 +100,38 @@ class WorkDomainTest {
         assertInstanceOf(TransitionResult.Changed.class, dataset.apply(key, new TaskCommand.SetDone(true), actor, time).result());
     }
 
+    @Test void repeatedAmbiguousRefreshDoesNotInventMoreTasksOrDiscardReview() {
+        var duplicate = List.of(region("Repeated", 0), region("Repeated", 0));
+        var dataset = RegionWorkDataset.create(LocalPlacementId.create()).reconcile(duplicate).dataset();
+        assertEquals(2, dataset.reviewRequired().size());
+        assertSame(dataset, dataset.reconcile(duplicate).dataset());
+        var edited = dataset.reconcile(List.of(region("Repeated", 1))).dataset();
+        assertEquals(1, edited.activeReviewRequired().size());
+        assertSame(edited, edited.reconcile(List.of(region("Repeated", 1))).dataset());
+        var expanded = dataset.reconcile(List.of(region("Repeated", 0), region("Repeated", 0), region("Added", 10))).dataset();
+        assertTrue(expanded.definitions().keySet().containsAll(dataset.definitions().keySet()));
+        assertEquals(0, expanded.archived().size());
+    }
+
+    @Test void removingAndRestoringBlockedRegionStillRequiresAcknowledgement() {
+        var descriptor = region("Region 1", 1);
+        var dataset = RegionWorkDataset.create(LocalPlacementId.create()).reconcile(List.of(region("Region 1", 0))).dataset().reconcile(List.of(descriptor)).dataset();
+        RegionTaskId key = dataset.definitions().keySet().iterator().next();
+        dataset = dataset.reconcile(List.of()).dataset();
+        assertEquals(0, dataset.activeReviewRequired().size());
+        dataset = dataset.reconcile(List.of(descriptor)).dataset();
+        assertEquals(TransitionResult.Reason.REVIEW_REQUIRED, ((TransitionResult.Rejected) dataset.apply(key, new TaskCommand.SetDone(true), actor, time).result()).reason());
+    }
+
+    @Test void versionExhaustionAndImmutableCollectionsAreExplicit() {
+        var full = new TaskState(stone, null, false, "", null, null, Long.MAX_VALUE);
+        assertEquals(TransitionResult.Reason.VERSION_EXHAUSTED, ((TransitionResult.Rejected) TaskTransitions.apply(full, new TaskCommand.SetDone(true), actor, time)).reason());
+        assertInstanceOf(TransitionResult.Unchanged.class, TaskTransitions.apply(full, new TaskCommand.SetDone(false), actor, time));
+        var dataset = MaterialWorkDataset.create(LocalPlacementId.create()).reconcile(List.of(material("minecraft:stone", 1))).dataset();
+        assertThrows(UnsupportedOperationException.class, () -> dataset.states().clear());
+        assertThrows(UnsupportedOperationException.class, () -> dataset.definitions().clear());
+    }
+
     private TaskState changed(TaskState state, TaskCommand command) {
         return assertInstanceOf(TransitionResult.Changed.class, TaskTransitions.apply(state, command, actor, time)).state();
     }

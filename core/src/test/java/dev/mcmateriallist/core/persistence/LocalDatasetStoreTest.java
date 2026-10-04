@@ -47,6 +47,17 @@ class LocalDatasetStoreTest {
         assertEquals("{\"schema\":99}", Files.readString(file));
     }
 
+    @Test void archivedRegionReviewSurvivesDiskRoundtripAndReappearance() {
+        var original = new RegionDescriptor("Region", new Vector3(0, 0, 0), new Vector3(2, 2, 2));
+        var moved = new RegionDescriptor("Region", new Vector3(1, 0, 0), new Vector3(2, 2, 2));
+        var dataset = RegionWorkDataset.create(placement).reconcile(List.of(original)).dataset().reconcile(List.of(moved)).dataset();
+        RegionTaskId key = dataset.definitions().keySet().iterator().next();
+        dataset = dataset.reconcile(List.of()).dataset();
+        var store = new LocalDatasetStore(root); assertTrue(store.save(dataset, -1).ok());
+        var restored = ((RegionWorkDataset) new LocalDatasetStore(root).load(placement, DatasetKind.REGIONS).dataset()).reconcile(List.of(moved)).dataset();
+        assertEquals(TransitionResult.Reason.REVIEW_REQUIRED, ((TransitionResult.Rejected) restored.apply(key, new TaskCommand.SetDone(true), UUID.randomUUID(), Instant.EPOCH).result()).reason());
+    }
+
     @Test void staleWritesFailAndRecoveryIsExplicit() throws Exception {
         var store = new LocalDatasetStore(root);
         MaterialWorkDataset first = materials();
