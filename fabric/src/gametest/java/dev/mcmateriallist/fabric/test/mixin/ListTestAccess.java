@@ -8,6 +8,8 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 
 @Mixin(value = WidgetListBase.class, remap = false)
 public interface ListTestAccess {
+    @Accessor("posX") int phase2X();
+    @Accessor("totalWidth") int phase2Width();
     @Accessor("posY") int phase0Y();
     @Accessor("totalHeight") int phase0Height();
     @Accessor("listWidgets") List<WidgetListEntryBase<?>> phase0Rows();

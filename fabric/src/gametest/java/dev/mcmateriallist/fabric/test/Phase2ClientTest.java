@@ -43,6 +43,8 @@ public final class Phase2ClientTest implements FabricClientGameTest {
         Blocks.POLISHED_BLACKSTONE_BRICKS, Blocks.CRACKED_DEEPSLATE_TILES, Blocks.CONCRETE.pick(DyeColor.GRAY),
         Blocks.CHISELED_DEEPSLATE, Blocks.WOOL.pick(DyeColor.GRAY), Blocks.STONE, Blocks.GLASS, Blocks.DIRT,
         Blocks.COBBLESTONE, Blocks.SANDSTONE, Blocks.GRANITE, Blocks.ANDESITE, Blocks.DIORITE};
+    // The first eleven totals are screenshot-known; the eight remaining totals are synthetic.
+    private static final int[] REFERENCE_TOTALS = {98774, 75744, 41214, 38228, 28133, 14644, 12936, 10867, 5741, 4550, 3096, 8, 7, 6, 5, 4, 3, 2, 1};
     @Override public void runTest(ClientGameTestContext context) {
         try (var world = FixtureWorlds.create(context, "Phase 2A")) {
             world.getClientLevel().waitForChunksRender();
@@ -56,7 +58,9 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             context.waitFor(mc -> materials.getMaterialsAll().size() == 19 && PlacementWorkAdapter.capture(placement, materials).status() == PlacementWorkAdapter.Status.OK);
             byte[] schematicBytes = Files.readAllBytes(placement.getSchematicFile());
             context.getInput().resizeWindow(1920, 1080);
-            context.runOnClient(mc -> { mc.options.guiScale().set(2); mc.resizeGui(); });
+            context.runOnClient(mc -> { mc.options.guiScale().set(3); mc.resizeGui(); });
+            context.runOnClient(mc -> materials.setMaterialListEntries(java.util.stream.IntStream.range(0, BLOCKS.length).mapToObj(index ->
+                new MaterialListEntry(new net.minecraft.world.item.ItemStack(BLOCKS[index]), REFERENCE_TOTALS[index], REFERENCE_TOTALS[index], 0, 0)).toList()));
             context.setScreen(() -> new GuiMaterialList(materials));
             GuiMaterialList screen = context.computeOnClient(mc -> (GuiMaterialList) mc.gui.screen());
             MaterialWorkSession session = context.computeOnClient(mc -> session(screen));
@@ -66,6 +70,15 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             click(context, context.computeOnClient(mc -> button(screen, "Track materials")));
             idle(context, session);
             check(session.dataset().progress().total() == 19, "Tracking denominator differs from all upstream rows");
+            context.runOnClient(mc -> {
+                var list = (ListTestAccess) ((GuiListTestAccess) screen).phase0List();
+                check(mc.getWindow().getGuiScaledWidth() == 640 && mc.getWindow().getGuiScaledHeight() == 360, "Material baseline must be 1920x1080 GUI3");
+                check(list.phase0Y() == 44, "Material work toolbar still consumes a baseline list row");
+                check(button(screen, "Show Info: OFF").getY() == 24 && button(screen, "Hide Done: OFF").getY() == 24, "Material filters do not share the baseline header");
+                var header = list.phase0Rows().getFirst();
+                check(((MaterialRowTestAccess) header).phase2Column(1) - header.getX() <= 244, "Material quantity columns still occupy the right action gap");
+                UiParityEvidence.controls(screen);
+            });
             var delivered = new java.util.concurrent.atomic.AtomicBoolean();
             var armed = new java.util.concurrent.atomic.AtomicBoolean(true);
             context.runOnClient(mc -> {
@@ -81,6 +94,8 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             context.runOnClient(mc -> {
                 sortByCount(screen, materials);
                 check(materials.getMaterialsAll().stream().allMatch(row -> row.getCountMissing() == row.getCountTotal() && row.getCountAvailable() == 0), "Fixture counts differ from Missing=Total, Available=0");
+                var ordered = ((GuiListTestAccess) screen).phase0List().getCurrentEntries();
+                for (int i = 0; i < 11; i++) check(ordered.get(i) instanceof MaterialListEntry material && material.getStack().is(BLOCKS[i].asItem()), "Reference row order differs");
             });
             for (String key : List.of("deepslate_bricks", "cracked_polished_blackstone_bricks", "chiseled_deepslate", "gray_wool")) {
                 var id = id(key);
@@ -108,7 +123,36 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             click(context, context.computeOnClient(mc -> button(detail, "Back")));
             context.waitForScreen(GuiMaterialList.class);
             context.runOnClient(mc -> check(row(screen, blackstone).getHeight() == 22, "Collapsed row height changed"));
-            context.takeScreenshot("phase2-materials-4-of-19");
+            // Reference notice rows are known; their actual note text is unknown.
+            for (String key : List.of("black_concrete", "cracked_deepslate_bricks", "gray_wool")) {
+                click(context, context.computeOnClient(mc -> rowButton(screen, id(key), MaterialHeadButton.class)));
+                context.waitForScreen(MaterialDetailScreen.class);
+                var noticeDetail = context.computeOnClient(mc -> (GuiBase) mc.gui.screen());
+                clickNote(context, context.computeOnClient(mc -> ((MaterialDetailTestAccess) noticeDetail).phase2Note()));
+                context.getInput().typeChars("Synthetic reference notice fixture");
+                click(context, context.computeOnClient(mc -> button(noticeDetail, "Save note"))); idle(context, session);
+                check(session.state(id(key)).note().equals("Synthetic reference notice fixture"), "Reference notice note was not saved through the real UI");
+                click(context, context.computeOnClient(mc -> button(noticeDetail, "Back")));
+            }
+            UiParityEvidence.capture(context, screen, "phase2-materials-4-of-19");
+            UiParityEvidence.color(context, "phase2-materials-4-of-19", 12, 314, 220, 9, 0xFF5555);
+            UiParityEvidence.color(context, "phase2-materials-4-of-19", 12, 314, 40, 9, 0xFFFFFF);
+            UiParityEvidence.notice(context, "phase2-materials-4-of-19", context.computeOnClient(mc -> rowButton(screen, blackstone, dev.mcmateriallist.fabric.client.work.WorkNoticeButton.class)));
+            for (String key : List.of("black_concrete", "cracked_deepslate_bricks", "gray_wool"))
+                UiParityEvidence.notice(context, "phase2-materials-4-of-19", context.computeOnClient(mc -> rowButton(screen, id(key), dev.mcmateriallist.fabric.client.work.WorkNoticeButton.class)));
+            click(context, context.computeOnClient(mc -> rowButton(screen, id("black_concrete"), dev.mcmateriallist.fabric.client.work.WorkNoticeButton.class)));
+            context.waitForScreen(MaterialDetailScreen.class);
+            check(context.computeOnClient(mc -> ((MaterialDetailTestAccess) mc.gui.screen()).phase2Id()).equals(id("black_concrete")), "Native notice hit opened the wrong registry task");
+            click(context, context.computeOnClient(mc -> button((GuiBase) mc.gui.screen(), "Back")));
+            context.runOnClient(mc -> check(((WidgetContainerTestAccess) row(screen, blackstone)).phase0Children().stream().anyMatch(widget ->
+                widget instanceof fi.dy.masa.malilib.gui.button.ButtonGeneric button && ((ButtonTestAccess) button).phase2Enabled()
+                && ((NativeNoticeTestAccess) button).phase2Icon() == fi.dy.masa.litematica.gui.Icons.NOTICE_EXCLAMATION_11), "Material note does not use the native notice bubble"));
+            for (String key : List.of("deepslate_bricks", "cracked_polished_blackstone_bricks", "chiseled_deepslate", "gray_wool")) {
+                for (Class<? extends ButtonBase> type : List.of(MaterialHeadButton.class, MaterialDoneButton.class)) {
+                    int[] bounds = context.computeOnClient(mc -> { var control = rowButton(screen, id(key), type); return new int[]{control.getX(), control.getY(), control.getWidth(), control.getHeight()}; });
+                    UiParityEvidence.color(context, "phase2-materials-4-of-19", bounds[0], bounds[1], bounds[2], bounds[3], type == MaterialHeadButton.class ? 0x22DD22 : 0xEE2222);
+                }
+            }
             click(context, context.computeOnClient(mc -> button(screen, "Show Info: OFF")));
             context.runOnClient(mc -> {
                 var rows = ((ListTestAccess) ((GuiListTestAccess) screen).phase0List()).phase0Rows();
@@ -126,30 +170,58 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             click(context, context.computeOnClient(mc -> button(screen, "Hide Done: OFF")));
             context.runOnClient(mc -> check(((GuiListTestAccess) screen).phase0List().getCurrentEntries().size() == 15 && session.dataset().progress().equals(new Progress(4, 19, 21)), "Hide Done changed denominator or did not filter completed rows"));
             click(context, context.computeOnClient(mc -> button(screen, "Hide Done: ON")));
+            var beforeScroll = session.dataset();
+            UiParityEvidence.scroll(context, screen, -40);
+            check(context.computeOnClient(mc -> ((GuiListTestAccess) screen).phase0List().getScrollbar().getValue()) > 0, "Real material scrolling did not move the view");
+            click(context, context.computeOnClient(mc -> rowButton(screen, id("diorite"), MaterialHeadButton.class)));
+            context.waitForScreen(MaterialDetailScreen.class);
+            check(context.computeOnClient(mc -> ((MaterialDetailTestAccess) mc.gui.screen()).phase2Id()).equals(id("diorite")), "Scrolled material head resolved the wrong task");
+            click(context, context.computeOnClient(mc -> button((GuiBase) mc.gui.screen(), "Back")));
+            UiParityEvidence.scroll(context, screen, 100);
+            check(session.dataset().equals(beforeScroll), "Scrolling/details changed exact material state");
             var header = context.computeOnClient(mc -> ((ListTestAccess) ((GuiListTestAccess) screen).phase0List()).phase0Rows().getFirst());
             int[] sortPoint = context.computeOnClient(mc -> new int[]{((MaterialRowTestAccess) header).phase2Column(0) + 8, header.getY() + 10});
             clickAt(context, sortPoint[0], sortPoint[1]);
             context.runOnClient(mc -> check(materials.getSortCriteria() == MaterialListBase.SortCriteria.NAME && session.dataset().progress().equals(new Progress(4, 19, 21)), "Patched header click did not sort by name or altered progress"));
+            for (var criterion : List.of(MaterialListBase.SortCriteria.COUNT_TOTAL, MaterialListBase.SortCriteria.COUNT_MISSING, MaterialListBase.SortCriteria.COUNT_AVAILABLE)) {
+                int column = criterion == MaterialListBase.SortCriteria.COUNT_TOTAL ? 1 : criterion == MaterialListBase.SortCriteria.COUNT_MISSING ? 2 : 3;
+                int[] point = context.computeOnClient(mc -> { var current = ((ListTestAccess) ((GuiListTestAccess) screen).phase0List()).phase0Rows().getFirst(); return new int[]{((MaterialRowTestAccess) current).phase2Column(column) + 3, current.getY() + 10}; });
+                clickAt(context, point[0], point[1]);
+                check(context.computeOnClient(mc -> materials.getSortCriteria()) == criterion && session.dataset().equals(beforeScroll), "Quantity header hit changed the wrong sort or task state");
+            }
             var search = context.computeOnClient(mc -> ((GuiListTestAccess) screen).phase0List().getSearchBarWidget());
             int[] searchPoint = context.computeOnClient(mc -> new int[]{search.getX() + search.getWidth() - 7, search.getY() + 7});
             clickAt(context, searchPoint[0], searchPoint[1]);
             context.getInput().typeChars("minecraft:deepslate_bricks");
             context.waitFor(mc -> ((GuiListTestAccess) screen).phase0List().getCurrentEntries().size() == 1);
             check(session.dataset().progress().equals(new Progress(4, 19, 21)), "Search altered progress denominator");
+            for (int scale : new int[]{4, 3}) {
+                context.runOnClient(mc -> { mc.options.guiScale().set(scale); mc.resizeGui(); }); context.waitTick();
+                context.runOnClient(mc -> {
+                    UiParityEvidence.controls(screen);
+                    var filtered = ((GuiListTestAccess) screen).phase0List();
+                    check(filtered.getSearchBarWidget().isSearchOpen() && filtered.getSearchBarWidget().getFilter().equals("minecraft:deepslate_bricks")
+                        && filtered.getCurrentEntries().size() == 1 && materials.getSortCriteria() == MaterialListBase.SortCriteria.COUNT_AVAILABLE,
+                        "Layout recreation lost native search/sort state");
+                    check(!session.hideDone() && !session.showInfo() && session.dataset().equals(beforeScroll), "Layout recreation changed session view/task state");
+                });
+            }
             context.getInput().pressKey(GLFW.GLFW_KEY_ESCAPE);
             context.waitFor(mc -> ((GuiListTestAccess) screen).phase0List().getCurrentEntries().size() == 19);
-            context.runOnClient(mc -> {
-                materials.ignoreEntry(materials.getMaterialsAll().getFirst()); materials.setHideAvailable(true);
-                materials.setSortCriteria(MaterialListBase.SortCriteria.NAME); ((GuiListTestAccess) screen).phase0List().refreshEntries();
-            });
+            context.runOnClient(mc -> sortByCount(screen, materials));
+            click(context, context.computeOnClient(mc -> ((WidgetContainerTestAccess) row(screen, blackstone)).phase0Children().stream()
+                .filter(widget -> widget instanceof ButtonBase candidate && "Ignore".equals(ChatFormatting.stripFormatting(((ButtonTestAccess) candidate).phase0Text()))).findFirst().orElseThrow()));
+            click(context, context.computeOnClient(mc -> button(screen, "Hide available: OFF")));
             check(session.dataset().progress().equals(new Progress(4, 19, 21)), "Ignore/filter/sort changed work progress");
-            context.runOnClient(mc -> { materials.clearIgnored(); materials.setHideAvailable(false); sortByCount(screen, materials); });
+            click(context, context.computeOnClient(mc -> button(screen, "Clear ignored")));
+            click(context, context.computeOnClient(mc -> button(screen, "Hide available: ON")));
+            context.runOnClient(mc -> sortByCount(screen, materials));
             click(context, context.computeOnClient(mc -> rowButton(screen, id("deepslate_bricks"), MaterialDoneButton.class))); idle(context, session);
             check(!session.state(id("deepslate_bricks")).done() && session.state(id("deepslate_bricks")).completedAt() == null && session.state(id("deepslate_bricks")).assignee() == null, "Undo changed owner or retained completion metadata");
             click(context, context.computeOnClient(mc -> rowButton(screen, id("deepslate_bricks"), MaterialDoneButton.class))); idle(context, session);
             var beforeRefresh = session.dataset().states();
             click(context, context.computeOnClient(mc -> button(screen, "Refresh")));
-            context.waitFor(mc -> !session.pending() && session.ready() && session.dataset().states().equals(beforeRefresh));
+            context.waitFor(mc -> !session.pending() && session.ready() && session.dataset().states().equals(beforeRefresh) && session.dataset().definitions().get(blackstone).total() == 19);
             check(session.dataset().progress().equals(new Progress(4, 19, 21)), "Upstream Refresh reset progress");
             verifyAdditional(context, screen, materials, session, primary);
             context.runOnClient(mc -> check(placement.isEnabled() && placement.isRenderingEnabled(), "Completion disabled placement"));
@@ -190,7 +262,7 @@ public final class Phase2ClientTest implements FabricClientGameTest {
         context.waitFor(mc -> !work.pending() && work.dataset().definitions().get(changedId).total() == 18);
         check(work.changed(changedId) && work.dataset().states().equals(states), "Definition change lost state or notice");
         context.waitTick();
-        context.runOnClient(mc -> check(((WidgetContainerTestAccess) row(screen, changedId)).phase0Children().stream().anyMatch(widget -> widget instanceof ButtonBase button && "!".equals(ChatFormatting.stripFormatting(((ButtonTestAccess) button).phase0Text()))), "Definition notice disappeared with Show Info OFF"));
+        context.runOnClient(mc -> check(((WidgetContainerTestAccess) row(screen, changedId)).phase0Children().stream().anyMatch(widget -> widget instanceof dev.mcmateriallist.fabric.client.work.WorkNoticeButton && ((ButtonTestAccess) widget).phase2Enabled()), "Definition notice disappeared with Show Info OFF"));
         context.runOnClient(mc -> materials.setMaterialListEntries(original.stream().filter(entry -> !entry.getStack().is(BLOCKS[18].asItem())).toList()));
         context.waitFor(mc -> !work.pending() && work.dataset().archived().containsKey(id("diorite")));
         click(context, context.computeOnClient(mc -> button(screen, "Archived work (1)")));
@@ -200,6 +272,7 @@ public final class Phase2ClientTest implements FabricClientGameTest {
         context.runOnClient(mc -> materials.setMaterialListEntries(original));
         context.waitFor(mc -> !work.pending() && work.dataset().archived().isEmpty() && work.dataset().definitions().size() == 19);
         check(work.dataset().states().equals(states), "Archived definition restoration lost identity/state");
+        verifyClosedRefresh(context, screen, materials, work, primary, original);
         var offline = java.util.UUID.randomUUID();
         var actor = context.computeOnClient(mc -> mc.player.getUUID());
         context.runOnClient(mc -> work.command(id("blackstone"), new TaskCommand.Assign(offline))); idle(context, work);
@@ -241,11 +314,52 @@ public final class Phase2ClientTest implements FabricClientGameTest {
                 }
                 var controls = ((GuiBaseTestAccess) screen).phase0Buttons();
                 for (var control : controls) if (control.getY() == 44) check(control.getX() >= 0 && control.getX() + control.getWidth() <= screen.getScreenWidth(), "Work toolbar outside scaled screen");
+                UiParityEvidence.controls(screen);
             });
-            context.takeScreenshot("phase2-japanese-name-scale-" + scale);
+            var counts = context.computeOnClient(mc -> PlacementWorkAdapter.capture(PlacementWorkAdapter.owner(materials), materials).snapshot().materials());
+            click(context, context.computeOnClient(mc -> rowButton(screen, id("blackstone"), MaterialDoneButton.class))); idle(context, work);
+            check(work.state(id("blackstone")).done(), "Scaled material completion hit missed long-name identity");
+            click(context, context.computeOnClient(mc -> rowButton(screen, id("blackstone"), MaterialDoneButton.class))); idle(context, work);
+            check(!work.state(id("blackstone")).done() && work.dataset().progress().equals(new Progress(4, 19, 21)) && context.computeOnClient(mc -> PlacementWorkAdapter.capture(PlacementWorkAdapter.owner(materials), materials).snapshot().materials()).equals(counts), "Scaled material undo changed denominator/counts");
+            UiParityEvidence.capture(context, screen, "phase2-japanese-name-scale-" + scale);
         }
-        context.runOnClient(mc -> { original.forEach(entry -> entry.getStack().remove(net.minecraft.core.component.DataComponents.CUSTOM_NAME)); mc.options.guiScale().set(2); mc.resizeGui(); sortByCount(screen, materials); });
+        context.getInput().resizeWindow(1280, 720);
+        context.runOnClient(mc -> { mc.options.guiScale().set(4); mc.resizeGui(); }); context.waitTick();
+        context.runOnClient(mc -> {
+            UiParityEvidence.controls(screen);
+            var list = (ListTestAccess) ((GuiListTestAccess) screen).phase0List();
+            check(list.phase0Y() + list.phase0Height() <= screen.getScreenHeight() - 74, "Narrow material list occupies readable progress line");
+        });
+        click(context, context.computeOnClient(mc -> rowButton(screen, id("blackstone"), MaterialHeadButton.class))); context.waitForScreen(MaterialDetailScreen.class);
+        check(context.computeOnClient(mc -> ((MaterialDetailTestAccess) mc.gui.screen()).phase2Id()).equals(id("blackstone")), "Narrow material head hit changed identity");
+        click(context, context.computeOnClient(mc -> button((GuiBase) mc.gui.screen(), "Back")));
+        UiParityEvidence.capture(context, screen, "phase2-materials-narrow-japanese-name");
+        context.getInput().resizeWindow(1920, 1080);
+        context.runOnClient(mc -> { original.forEach(entry -> entry.getStack().remove(net.minecraft.core.component.DataComponents.CUSTOM_NAME)); mc.options.guiScale().set(3); mc.resizeGui(); sortByCount(screen, materials); });
+        var beforeLanguage = work.dataset();
+        UiParityEvidence.language(context, screen, "ja_jp");
+        context.runOnClient(mc -> {
+            screen.initGui(); UiParityEvidence.controls(screen);
+            check(MaterialWorkSession.text("show_info", "OFF").equals("補足情報: OFF"), "Native Japanese material translation unavailable");
+        });
+        UiParityEvidence.capture(context, screen, "phase2-materials-japanese-ui");
+        check(work.dataset().equals(beforeLanguage), "Native language reload changed material IDs/state");
+        UiParityEvidence.language(context, screen, "en_us");
+        context.runOnClient(mc -> {
+            check(work.writable(), "After English language reload material work unavailable: " + work.feedback());
+            var capture = PlacementWorkAdapter.capture(PlacementWorkAdapter.owner(materials), materials);
+            check(capture.status() == PlacementWorkAdapter.Status.OK && work.dataset().definitions().equals(capture.snapshot().materials().stream().collect(java.util.stream.Collectors.toMap(MaterialDefinition::id, definition -> definition))), "After language reload material observations differ from confirmed definitions");
+        });
         // An I/O failure must retain the last confirmed view, then require explicit recovery.
+        var expectedBackup = work.dataset();
+        click(context, context.computeOnClient(mc -> rowButton(screen, id("blackstone"), MaterialHeadButton.class)));
+        context.waitForScreen(MaterialDetailScreen.class);
+        var rollbackDetail = context.computeOnClient(mc -> (GuiBase) mc.gui.screen());
+        clickNote(context, context.computeOnClient(mc -> ((MaterialDetailTestAccess) rollbackDetail).phase2Note()));
+        context.getInput().typeChars("\nSynthetic recovery rollback transaction");
+        click(context, context.computeOnClient(mc -> button(rollbackDetail, "Save note"))); idle(context, work);
+        click(context, context.computeOnClient(mc -> button(rollbackDetail, "Back")));
+        check(new DatasetJsonCodec().decode(Files.readString(primary.resolveSibling("materials.json.bak"))).equals(expectedBackup), "Recovery fixture did not retain the exact previous-good snapshot");
         var previous = work.dataset();
         byte[] damaged = "{ damaged".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Files.write(primary, damaged);
@@ -257,11 +371,14 @@ public final class Phase2ClientTest implements FabricClientGameTest {
         var recoveryScreen = context.computeOnClient(mc -> (GuiMaterialList) mc.gui.screen());
         var recovery = context.computeOnClient(mc -> session(recoveryScreen));
         context.waitFor(mc -> !recovery.pending() && recovery.status() == StoreStatus.RECOVERY_REQUIRED);
+        context.runOnClient(mc -> UiParityEvidence.controls(recoveryScreen));
         check(recovery.dataset() == null && !recovery.writable(), "Backup candidate was published as current work");
         click(context, context.computeOnClient(mc -> button(recoveryScreen, "Recover backup")));
+        context.runOnClient(mc -> UiParityEvidence.controls(recoveryScreen));
         check(Arrays.equals(damaged, Files.readAllBytes(primary)), "First recovery click changed storage without confirmation");
         click(context, context.computeOnClient(mc -> button(recoveryScreen, "Confirm recovery"))); idle(context, recovery);
         check(recovery.dataset().progress().equals(new Progress(4, 19, 21)), "Explicit backup recovery lost reference progress");
+        check(recovery.dataset().equals(expectedBackup) && !recovery.state(id("blackstone")).note().contains("Synthetic recovery rollback transaction"), "Recovery did not restore exact previous-good metadata/note rollback");
         context.takeScreenshot("phase2-explicit-recovery");
         var recovered = recovery.dataset();
         byte[] secondDamage = "{ second material incident".getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -282,6 +399,25 @@ public final class Phase2ClientTest implements FabricClientGameTest {
         if (!Files.isDirectory(directory)) return 0;
         try (var files = Files.list(directory)) { return files.filter(file -> file.getFileName().toString().startsWith(prefix) && file.getFileName().toString().endsWith(suffix)).count(); }
     }
+    private static void verifyClosedRefresh(ClientGameTestContext context, GuiMaterialList screen, MaterialListPlacement materials, MaterialWorkSession work, Path primary, List<MaterialListEntry> original) throws java.io.IOException {
+        var confirmed = work.dataset();
+        byte[] bytes = Files.readAllBytes(primary);
+        var armed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var delivered = new java.util.concurrent.atomic.AtomicBoolean();
+        context.runOnClient(mc -> net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (!armed.compareAndSet(true, false)) return;
+            materials.setMaterialListEntries(original.stream().map(entry -> entry.getStack().is(BLOCKS[0].asItem())
+                ? new MaterialListEntry(entry.getStack(), entry.getCountTotal() + 1, entry.getCountMissing() + 1, entry.getCountMismatched(), entry.getCountAvailable()) : entry).toList());
+            // schedule() must defer; the screen closes before the queued capture can run.
+            GuiBase.openGui(null); delivered.set(true);
+        }));
+        context.waitFor(mc -> delivered.get()); context.waitTick(); context.waitTick();
+        var barrier = context.computeOnClient(mc -> dev.mcmateriallist.fabric.client.MCMaterialListClient.work().load(confirmed.placementId(), DatasetKind.MATERIALS));
+        context.waitFor(mc -> barrier.isDone());
+        check(barrier.join().dataset().equals(confirmed) && work.dataset().equals(confirmed) && Arrays.equals(bytes, Files.readAllBytes(primary)), "Closed screen accepted a late upstream observation");
+        context.runOnClient(mc -> materials.setMaterialListEntries(original)); context.waitTick(); context.waitTick();
+        context.setScreen(() -> screen);
+    }
     private static MaterialWorkSession session(GuiMaterialList screen) { return ((MaterialWorkScreen) screen).mcmateriallist$session(); }
     private static Path primary(SchematicPlacement placement) { return FabricLoader.getInstance().getConfigDir().resolve("mcmateriallist/placements").resolve(placement.getHashId().toString()).resolve("materials.json"); }
     private static void idle(ClientGameTestContext context, MaterialWorkSession session) { context.waitFor(mc -> !session.pending() && session.status() == StoreStatus.OK); }
@@ -290,7 +426,7 @@ public final class Phase2ClientTest implements FabricClientGameTest {
         return ((ListTestAccess) ((GuiListTestAccess) screen).phase0List()).phase0Rows().stream()
             .filter(candidate -> candidate instanceof WidgetMaterialListEntry && candidate.getEntry() instanceof MaterialListEntry entry
                 && net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(entry.getStack().getItem()).toString().equals(id.registryId()))
-            .map(candidate -> (WidgetMaterialListEntry) candidate).findFirst().orElseThrow(() -> new AssertionError("Expected material row not visible"));
+            .map(candidate -> (WidgetMaterialListEntry) candidate).findFirst().orElseThrow(() -> new AssertionError("Expected material row not visible: " + id.registryId()));
     }
     private static ButtonBase rowButton(GuiMaterialList screen, MaterialTaskId id, Class<? extends ButtonBase> type) {
         return ((WidgetContainerTestAccess) row(screen, id)).phase0Children().stream().filter(type::isInstance).map(widget -> (ButtonBase) widget).findFirst().orElseThrow(() -> new AssertionError("Missing material control"));

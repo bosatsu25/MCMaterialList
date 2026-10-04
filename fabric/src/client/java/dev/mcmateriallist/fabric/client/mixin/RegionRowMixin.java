@@ -3,6 +3,7 @@ package dev.mcmateriallist.fabric.client.mixin;
 import dev.mcmateriallist.core.work.*;
 import dev.mcmateriallist.fabric.client.material.MaterialPresentation;
 import dev.mcmateriallist.fabric.client.region.*;
+import dev.mcmateriallist.fabric.client.work.WorkNoticeButton;
 import fi.dy.masa.litematica.gui.widgets.WidgetPlacementSubRegion;
 import fi.dy.masa.litematica.gui.widgets.WidgetListPlacementSubRegions;
 import fi.dy.masa.litematica.schematic.placement.SubRegionPlacement;
@@ -25,7 +26,7 @@ public abstract class RegionRowMixin extends WidgetListEntryBase<SubRegionPlacem
     @Unique private RegionTaskId mcmateriallist$id;
     @Unique private RegionHeadButton mcmateriallist$head;
     @Unique private RegionDoneButton mcmateriallist$done;
-    @Unique private ButtonGeneric mcmateriallist$notice;
+    @Unique private WorkNoticeButton mcmateriallist$notice;
     protected RegionRowMixin() { super(0, 0, 0, 0, null, 0); }
     @Inject(method = "<init>", at = @At("TAIL"), require = 1)
     private void addWork(CallbackInfo callback) {
@@ -36,8 +37,7 @@ public abstract class RegionRowMixin extends WidgetListEntryBase<SubRegionPlacem
             var state = mcmateriallist$work.state(mcmateriallist$id);
             if (state != null) mcmateriallist$work.command(mcmateriallist$id, new TaskCommand.SetDone(!state.done()));
         });
-        mcmateriallist$notice = addButton(new ButtonGeneric(buttonsStartX - 35, y + 4, 12, 14, ""), (button, mouse) -> mcmateriallist$work.detail(mcmateriallist$id, placement.getName()));
-        mcmateriallist$notice.setRenderDefaultBackground(false);
+        mcmateriallist$notice = addButton(new WorkNoticeButton(buttonsStartX - 35, y + 4), (button, mouse) -> mcmateriallist$work.detail(mcmateriallist$id, placement.getName()));
     }
     @ModifyArg(method = "render", at = @At(value = "INVOKE", target = "Lfi/dy/masa/litematica/gui/widgets/WidgetPlacementSubRegion;drawString(Lfi/dy/masa/malilib/render/GuiContext;IIILjava/lang/String;)V"), index = 1, require = 1)
     private int nameX(int original) { return x + 40; }
@@ -59,12 +59,11 @@ public abstract class RegionRowMixin extends WidgetListEntryBase<SubRegionPlacem
     private void notice(GuiContext ctx, int mouseX, int mouseY, boolean selected, CallbackInfo callback) {
         if (mcmateriallist$notice == null) return;
         String reasons = mcmateriallist$reasons();
-        mcmateriallist$notice.setDisplayString(reasons.isEmpty() ? "" : "§e!");
-        mcmateriallist$notice.setEnabled(!reasons.isEmpty()); mcmateriallist$notice.setHoverStrings(reasons);
+        mcmateriallist$notice.setNotice(!reasons.isEmpty()); mcmateriallist$notice.setHoverStrings(reasons);
     }
     @Inject(method = "render", at = @At("TAIL"), require = 1)
     private void info(GuiContext ctx, int mouseX, int mouseY, boolean selected, CallbackInfo callback) {
-        if (mcmateriallist$work.showInfo()) drawString(ctx, x + 40, y + 26, 0xFFBBBBBB, MaterialPresentation.clamp(RegionPresentation.info(mcmateriallist$work.state(mcmateriallist$id)), Math.max(0, width - 44)));
+        if (mcmateriallist$work.showInfo()) drawString(ctx, x + 40, y + 26, 0xFFBBBBBB, MaterialPresentation.clamp(RegionPresentation.info(mcmateriallist$work.state(mcmateriallist$id)), Math.max(0, buttonsStartX - 38 - (x + 40))));
     }
     @Inject(method = "canSelectAt", at = @At("HEAD"), cancellable = true, require = 1)
     private void keepActionHits(MouseButtonEvent click, CallbackInfoReturnable<Boolean> callback) {
@@ -77,6 +76,7 @@ public abstract class RegionRowMixin extends WidgetListEntryBase<SubRegionPlacem
         if (mcmateriallist$notice.isMouseOver(mouseX, mouseY)) text = mcmateriallist$reasons();
         else if (mcmateriallist$head.isMouseOver(mouseX, mouseY)) text = RegionPresentation.info(mcmateriallist$work.state(mcmateriallist$id));
         else if (mcmateriallist$done.isMouseOver(mouseX, mouseY)) text = mcmateriallist$work.writable(mcmateriallist$id) ? RegionWorkSession.text(mcmateriallist$work.state(mcmateriallist$id).done() ? "undo" : "done") : mcmateriallist$work.review(mcmateriallist$id) ? RegionWorkSession.text("definition_changed") : mcmateriallist$work.feedback();
+        else if (mouseX >= x + 40 && mouseX < buttonsStartX - 35 && mouseY >= y && mouseY < y + 22) text = placement.getName();
         if (text != null) { ctx.renderTooltip(textRenderer, Component.literal(text), mouseX, mouseY); callback.cancel(); }
     }
 }

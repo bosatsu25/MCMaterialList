@@ -6,6 +6,8 @@ import dev.mcmateriallist.core.work.*;
 import dev.mcmateriallist.fabric.client.MCMaterialListClient;
 import dev.mcmateriallist.fabric.client.litematica.PlacementIdentity;
 import dev.mcmateriallist.fabric.client.work.MaterialReadiness;
+import dev.mcmateriallist.fabric.client.work.WorkScreenGeometry;
+import fi.dy.masa.malilib.render.RenderUtils;
 import dev.mcmateriallist.fabric.client.work.PlacementWorkAdapter;
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.gui.GuiMaterialList;
@@ -54,6 +56,10 @@ public final class MaterialWorkSession {
     public boolean pending() { return pending; }
     public boolean showInfo() { return showInfo; }
     public boolean hideDone() { return hideDone; }
+    public boolean compact() {
+        return WorkScreenGeometry.compact(screen.getScreenWidth(), screen.getScreenHeight())
+            && status != StoreStatus.RECOVERY_REQUIRED && (confirmed == null || confirmed.archived().isEmpty());
+    }
     public boolean changed(MaterialTaskId id) { return changed.contains(id); }
     public TaskState state(MaterialTaskId id) { return confirmed == null ? null : confirmed.states().get(id); }
     public boolean ready() {
@@ -72,19 +78,26 @@ public final class MaterialWorkSession {
             loaded = true;
             await(MCMaterialListClient.work().load(placement, DatasetKind.MATERIALS), this::publish);
         }
-        int x = 12;
-        refreshButton = addToolbar(x, text(status == StoreStatus.MISSING ? "track" : "refresh"), (button, mouse) -> refresh());
-        x += refreshButton.getWidth() + 4;
-        var info = addToolbar(x, text("show_info", showInfo ? "ON" : "OFF"), (button, mouse) -> {
+        boolean compact = compact();
+        var buttons = ((dev.mcmateriallist.fabric.client.mixin.GuiButtonsAccess) screen).mcmateriallist$buttons();
+        int refreshX = compact ? buttons.stream().filter(button -> button.getY() == screen.getScreenHeight() - 22)
+            .mapToInt(button -> button.getX() + button.getWidth()).max().orElse(12) + 2 : 12;
+        refreshButton = addToolbar(refreshX, compact ? screen.getScreenHeight() - 22 : 44, text(status == StoreStatus.MISSING ? "track" : "refresh"), (button, mouse) -> refresh());
+        int x = compact ? buttons.stream().filter(button -> button.getY() == 24)
+            .mapToInt(button -> button.getX() + button.getWidth()).max().orElse(12) + 2 : refreshX + refreshButton.getWidth() + 4;
+        int filterY = compact ? 24 : 44;
+        var info = addToolbar(x, filterY, text("show_info", showInfo ? "ON" : "OFF"), (button, mouse) -> {
             showInfo = !showInfo; screen.initGui();
         });
         x += info.getWidth() + 4;
-        var hide = addToolbar(x, text("hide_done", hideDone ? "ON" : "OFF"), (button, mouse) -> {
+        var hide = addToolbar(x, filterY, text("hide_done", hideDone ? "ON" : "OFF"), (button, mouse) -> {
             hideDone = !hideDone; screen.initGui();
         });
         x += hide.getWidth() + 4;
+        if (compact) x = refreshX + refreshButton.getWidth() + 2;
+        recoverButton = null;
         if (status == StoreStatus.RECOVERY_REQUIRED) {
-            recoverButton = addToolbar(x, text(recoveryConfirmed ? "confirm_recovery" : "recover"), (button, mouse) -> {
+            recoverButton = addToolbar(x, compact ? screen.getScreenHeight() - 58 : 44, text(recoveryConfirmed ? "confirm_recovery" : "recover"), (button, mouse) -> {
                 if (!recoveryConfirmed) { recoveryConfirmed = true; screen.addMessage(MessageType.WARNING, text("recovery_warning")); screen.initGui(); }
                 else if (!pending && ready()) {
                     recoveryConfirmed = false;
@@ -92,13 +105,13 @@ public final class MaterialWorkSession {
                 }
             });
         } else if (confirmed != null && !confirmed.archived().isEmpty()) {
-            addToolbar(x, text("archived", confirmed.archived().size()), (button, mouse) -> GuiBase.openGui(new MaterialArchiveScreen(screen, this)));
+            addToolbar(x, compact ? screen.getScreenHeight() - 58 : 44, text("archived", confirmed.archived().size()), (button, mouse) -> GuiBase.openGui(new MaterialArchiveScreen(screen, this)));
         }
         renderControls();
     }
-    private ButtonGeneric addToolbar(int x, String label, IButtonActionListener action) {
+    private ButtonGeneric addToolbar(int x, int y, String label, IButtonActionListener action) {
         int width = Math.min(screen.getStringWidth(label) + 10, Math.max(28, (screen.getScreenWidth() - 24) / 4 - 4));
-        var button = new ButtonGeneric(x, 44, width, 20, MaterialPresentation.clamp(label, width - 8));
+        var button = new ButtonGeneric(x, y, width, 20, MaterialPresentation.clamp(label, width - 8));
         button.setHoverStrings(label); return screen.addButton(button, action);
     }
     public void renderControls() {
@@ -108,8 +121,14 @@ public final class MaterialWorkSession {
     public void footer(GuiContext ctx) {
         renderControls();
         String progress = confirmed == null ? text("untracked") : text("progress", confirmed.progress().completed(), confirmed.progress().total(), confirmed.progress().percentage());
-        int y = screen.getScreenHeight() - 53;
-        screen.drawString(ctx, MaterialPresentation.clamp(progress + "  " + feedback(), Math.max(0, screen.getScreenWidth() - 124)), 120, y, 0xFFFFFFFF);
+        if (confirmed != null && confirmed.progress().completed() < confirmed.progress().total()) {
+            String fraction = confirmed.progress().completed() + " / " + confirmed.progress().total() + " (" + confirmed.progress().percentage() + "%)";
+            progress = progress.replace(fraction, "\u00a7c" + fraction + "\u00a7r");
+        }
+        int y = screen.getScreenHeight() - (compact() ? 46 : 72);
+        String value = MaterialPresentation.clamp(progress + "  " + feedback(), Math.max(0, screen.getScreenWidth() - 24));
+        RenderUtils.drawRect(ctx, 10, y - 2, screen.getStringWidth(value) + 4, 12, 0xFF1D2027);
+        screen.drawString(ctx, value, 12, y, 0xFFFFFFFF);
     }
     public void refresh() {
         if (pending || placement == null || MCMaterialListClient.work() == null) return;

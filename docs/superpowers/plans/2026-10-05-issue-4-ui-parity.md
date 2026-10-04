@@ -1,0 +1,86 @@
+# Issue 4: Phase 2C UI parity and regression suite
+
+## Goal
+Verify and refine the existing material and region collaborative screens against the supplied reference images at 1920x1080 GUI scale 3. Implement Issue #4 only. Read the authoritative design, the Phase 0/1/2 reports and Issue #4. Preserve all current behavior and verification gates. Screenshots show semantics and layout, not permission to invent unknown players, unseen material rows, font/resource packs or future controls.
+
+## Global Constraints
+- One Issue per branch/PR. No networking, warehouse scanning, Unshare or new feature scope.
+- Completion and assignment stay independent of material quantities and placement flags. Hide Done, search, order and upstream Ignore never change the progress denominator or stable task identities. Material and region storage stay separate; schematic bytes never change.
+- Opening remains read-only. Pending/error/review/recovery behavior, draft preservation and confirmed-result publication remain intact.
+- Preserve existing Litematica operations, warnings, tooltips, selection and keyboard/mouse hits. No fake functional Location File, Check Materials or Unshare controls; later Issues own these functions.
+- Preserve missing-skin fallback and fixed-size face/done overlay. No new skin service or external requests.
+- Java 25 with configured Gradle/JDK, no preview/reflection/unchecked casts/warning suppressions. No ignored/generated/cache/tool files staged, no history rewrite or unrelated removal. No local paths/private identifiers in tracked evidence.
+
+### Task 1: Complete the applicable Phase 2 parity gate
+
+**Integration decisions:** Keep the existing pinned optional/version-gated mixins and durable sessions. Prefer small pure layout helpers and focused GUI hooks; do not redesign working persistence. Review both actual final Issue3 screens before editing. Use one implementer because header/list/row geometry and real-hit tests form a single integration surface.
+
+**Baseline reference:** Material rows: face, item, name, Total/Missing/Available, notice, manual completion action, Ignore. Reference has 19 tracked rows, done visible rows 3/4/10/11 and progress 4/19 (21%); Missing can equal Total and Available stay zero on done rows. The reference region screen has face, L icon, name, combined notice, manual action, Configure and Placement ON. It tracks 62 regions, with Region 2/6/8/9/11 done and progress 5/62 (8%) while placements remain ON. The unseen eight material rows are explicit synthetic fixture data. Reference face identities are unknown.
+
+**Observed starting differences to examine:** The added toolbar consumes another list row above the material header. Material quantity columns consume the spare gap near right actions rather than placing quantities nearer the bounded name column, and manual progress is white rather than incomplete red. Material notice currently uses a text exclamation, whereas the pinned native notice bubble is available. Confirm these against real images and make focused corrections that improve baseline while preserving upstream Show All, Multiplier, selection and narrow-screen behavior. Region baseline must explicitly use GUI scale 3, not infer parity from a scale2 screenshot. Preserve standard modification notice reason when notes coexist or are removed.
+
+**Steps:**
+1. Inspect real material/region screenshots and pure/current layout source. Add meaningful failing assertions for corrected offsets, non-overlap, sort-arrow clearance (24 GUI pixels between quantity columns), row order and genuine mouse hits before changing layout. Check configured compiler/build RED then GREEN; never add pixel snapshots sensitive to world background.
+2. Consolidate controls into available header/footer space at baseline, with a deliberate readable narrow-screen fallback. Keep actual progress fractions red when incomplete and preserve separate upstream counts/progress. Use the native notice bubble where applicable. Keep names clamped with accessible full-name hover and expanded details free of action hit regions.
+3. Extend real client evidence at 1920x1080 GUI3 and meaningful GUI scales 1-4 for both screens. Capture unobstructed screens after transient upstream messages expire or explicitly test-only cleanup, without disabling production feedback. Test scrolling, alphabetical/quantity sorting, search/filter, Hide Done, Show Info row-height/hits, missing skin, Japanese and long names, notices, standard tooltip reason and narrow dimensions.
+4. Verify real upstream handlers and work transitions, exact stable IDs and denominator despite view changes, metadata persistence/restart, counts/enable flags/schematic bytes unchanged. Preserve prior Phase 0/1/2A/2B assertions and timeout strength. Use the established per-world fixture isolation.
+5. Document AC-01 through AC-10 and AC-18 with concrete automated/observed evidence and explicit pending later-phase functions. Do not call full product acceptance or reference-pixel identity achieved if a function or unknown resource is absent. Update only appropriate Phase2 report/README/verification config.
+6. Run targeted covering tests and configured clean verifyPhase2 with accepted EULA. Inspect XML counts, application JAR exclusions, images, diff/check and documentation. Self-review, commit only scoped tracked source/docs/tests/config, and write the full report.
+
+**Handoff:** No push, PR, merge, branch changes/deletion or subagents. Root owns independent task/final review and hosted CI/merge. Report status, commits, one-line test evidence and concerns; save detailed results and image paths in the supplied report file. Work is not complete before the latest-head hosted checks and merge.
+
+## Execution ledger
+- Base: 488442a03d05f739c352672d1239f6cc7182ad3b. Dedicated branch: test/issue-4-ui-parity-regressions. PR #20 is merged and #3 closed; main was updated ff-only and clean before branch creation.
+- Preflight: one coherent geometry/interaction integration task; no independent conflicting task pair.
+- Ruling: scratch/reports/review packages live in TEMP rather than ignored workspace tool files, as required by the user's global instructions. Cost if wrong: recovery relies on this tracked ledger and report references.
+- Task 1: ready for the single implementation agent, followed by independent task/final review and hosted CI. Issue completion still requires merge.
+
+Acceptance interpretation note for Task1:
+AC10 applies to durable task correspondence, not permission to guess renamed original region keys. Placement/display translations and view order must keep IDs; an actual original schematic region-key/geometry change remains conservative review/archive behavior. Phase2 demonstrates independent local placements as the current product mode. Two different shared server projects and their bindings receive the separate networking-phase proof. Document that distinction rather than inventing a shared project result before it exists.
+
+Optional reference capture fixture refinement: the eleven visible material totals are known from the attached screenshot: blackstone=98774, black_concrete=75744, deepslate_bricks=41214, cracked_polished_blackstone_bricks=38228, cracked_deepslate_bricks=28133, mud=14644, polished_blackstone_bricks=12936, cracked_deepslate_tiles=10867, gray_concrete=5741, chiseled_deepslate=4550, gray_wool=3096. Missing equals each Total and Available is zero. If a dedicated baseline capture uses these values through the existing legitimate MaterialList fixture API, keep the eight unseen totals explicitly synthetic and below the visible range, and preserve upstream refresh/count tests separately. Do not construct an enormous block world just to imitate counts, replace production counts, or weaken existing quantity invariance assertions.
+
+Controller preflight confirmed against merged Issue3:
+| Task | Producer / consumer | Self-consistency and conflict check |
+|---|---|---|
+| 1 | Pure offsets and GUI hooks / real mouse hits and screenshot captures | Same GUI coordinate system and fixed baseline; sort-arrow spacing and narrow fallbacks preserve upstream controls. Completion/count/placement separation is binding. |
+| 1 | Independent material/region sessions / filters, name changes and restart tests | View-only layout changes preserve confirmed persistence results, stable IDs and archived/review rules. Original definition changes remain conservative. |
+| 1 | Synthetic reference fixture / 1920x1080 and scales1-4 evidence | Known visible values are identified; unseen rows/players are explicitly unknown or synthetic. World backgrounds are excluded from brittle comparisons. |
+| No inter-task pair | One coherent integration task | No second task shares a file/interface; no conflicting task pair. |
+
+Final Issue3 review follow-ups for this task:
+- At 1280x720 the region footer progress overlaps the HUD hearts although action controls remain distinct. Keep progress readable by positioning/reserving its footer area and verify both screens at narrow dimensions without altering upstream HUD settings.
+- docs/phase-2-litematica-ui.md contains a historical scoped-review-pending sentence. Record the subsequently accepted Issue3 review and hosted result honestly when updating Phase2 evidence; do not rewrite earlier commands as later runs.
+
+
+## Task 1 execution
+
+- Reconfirmed supplied feature branch, merged base, repository root and origin; sole implementation writer, no push or branch changes.
+- Read authoritative root design and Phase 0/1/2 reports; visually inspected both supplied references and both final Issue3 captures.
+- RED: configured JDK25 MaterialRowLayoutTest: 4 tests, 1 expected failure; wide rows allocated 676 name pixels rather than bounded 192.
+- RED: real client gate exited 1 in 1m 2s: Material work toolbar still consumes a baseline list row. Both baseline assertions explicitly use 1920x1080 GUI3.
+- Intermediate compiler failure: direct GuiBase button access was private; corrected using an optional/version-gated accessor, with no warning suppression.
+
+Ruling: use an explicitly identified test reproduction language resource for the eleven screenshot-known Japanese material labels while keeping English buttons; verify ordinary Japanese UI using native language selection/reload. Design7.2 requests a reproduction configuration, and controlled test resources fulfill comparison needs without an unsolicited product-wide locale feature. Do not claim a bundled production mixed-locale setting or original font/resource-pack identity. Cost if wrong: a separately configurable production display preset would need additional implementation later.
+
+Ruling: correct confirmed upstream Refresh callback ordering discovered by strengthened parity regression, rather than restoring fixture values to mask it. Why: actual completion currently captures COUNT_IN_PROGRESS after refresh. Cost if wrong: small prerequisite GUI lifecycle behavior change requiring focused regression across refresh/close/restart, beyond geometry-only edits.
+
+Focused lifecycle RED: actual client rejected the new exact state/primary-byte check with `Closed screen accepted a late upstream observation` after the count publication queued a callback and the same tick closed the screen. The service is one config-root instance per client process; ordinary world switches do not replace it. Capture service/level identity and check the active owning screen before issuing queued persistence work. The strengthened actual recount remains 19 materials and preserves task states.
+
+Native reload evidence: Minecraft LoadingOverlay completes its reload callback before its fade-out clears Gui.overlay(). Future completion alone does not authorize real input. Tests must await overlay-null and current-screen readiness, without extending timeouts.
+
+Ruling: adapt fixture history with an explicit UI note save after scale Done/Undo so the preserved4/19 recovery acceptance still examines an actual previous-good snapshot. Why: added real transactions legitimately rotate backup to5/19. Cost if wrong: one extra fixture transaction and explicitly tested note rollback, rather than changing production durability.
+
+Native geometry RED: the actual client reported `Screen control overlaps native list/header` after scale changes. Pinned GuiListBase only resizes its immutable-position widget. The fix uses native setListPosition/reCreateListWidget only when Y changes, preserving search text/open/focus, selection and scroll. The next run passed all material scale/narrow geometry and real hit checks, then exposed the genuine previous-good backup history mismatch. Reload overlay readiness also progressed to successful explicit recovery input.
+
+Native sprite RED: the real screenshot control crop lacked an opaque color read from the actual NOTICE_EXCLAMATION_11 texture. ButtonGeneric applies a three-state texture offset, while this native notice has a single sprite. WorkNoticeButton narrowly overrides the texture offset to zero, without mutating the shared Icons enum. Capture cleanup also clears test-world vanilla chat: native export intentionally emits an open-file chat message in addition to both MaLiLib message queues.
+
+Footer color RED: actual GUI3 material capture lacked white pixels in the prefix crop while retaining red incomplete progress. Render only the incomplete fraction red, retaining white translated label and feedback. Narrow footer remains on an opaque reserved strip. Native pinned blue exclamation differs from the reference yellow bubble; original font/texture/resource-pack identity remains unknown, explicitly documented without copied assets.
+
+Ruling: geometry assertions cover every added work/diagnostic control against every native/work control and actual padded list content, rather than reject the unchanged upstream rendering-button duplicate. Why: Issue4 preserves native handlers and fixes collaborative layout, not upstream native duplication. Cost if wrong: pre-existing native-native overlap remains outside this gate; compatibility audit may separately investigate it.
+
+Actual region baseline duplicate evidence: both native controls at x610,y22,w20,h20. Pinned TOGGLE_RENDERING adds its button in the switch then reaches the common addButton tail, duplicating the same native control. The geometry test identifies every added control through complete localized hover labels (including recovery/confirmation/archive) or the diagnostic's literal label, then checks it against all native/work controls and actual four-pixel-padded content. Existing actual Rendering clicks remain in the regression suite. No upstream control geometry changed.
+
+Final local GREEN: covering core/client/restart gate exited0 in2m9s. The child finalclean escalation did not start a process and was interrupted at the approval boundary; the controller then executed the same configured clean verifyPhase2 gate through its normal escalated tool. Actual exit0, BUILD SUCCESSFUL in2m38s,29tasks25executed4up-to-date. Inspected core XML:32tests,0failures/errors/skips. Both real clients and isolated dedicated-server PASS, plus Phase0/1/2 and distribution/isolation checks.
+
+Final JAR audit: phase.2c application contains nested core and ordinary application translations/client mixins; no gametest/server-smoke/test-mixin code, screenshot/logs or assets/minecraft/lang/en_us.json reproduction resource. Final saved GUI3 baseline/narrow/native-Japanese images reviewed: readable opaque footer strips, distinct controls with real hits, visible pinned native sprites and no controlled capture export/chat notices. Narrow labels may clamp with full localized hover text. Native blue sprite/unknown original fonts/resources/players and extra first-row regression notice remain honest comparison differences. Root design unchanged; git diff --check passed; no secrets/private identifiers/machine paths added to tracked files. No compiler warning suppression. Controller owns independent review and hosted CI.

@@ -162,3 +162,5 @@ Optional mixins/accessors and readiness publication are tied to the exact suppor
 Phase 2 must surface per-dataset storage/recovery/conflict statuses, active region review, archived work and definition change notices. It should submit explicit commands to the I/O service and display durable results instead of mutating records or toggling state optimistically. Local UUID assignment is not server permission enforcement. Networking and a shared authoritative project remain Phase 3 work.
 
 **Phase 1 is complete; Phase 2 can begin on this pinned baseline.** There is no unresolved Phase 1 blocker. This is readiness to implement local UI, not evidence that final screenshot UI or multiplayer behavior has been implemented. This task stops at Phase 1.
+
+後続状態: この文書の段階1の実行結果とローカル保存契約は当時の記録。2画面UIと固定条件の比較・実操作・再起動の追加検証は [Phase 2A/2B/2C](phase-2-litematica-ui.md) に記録する。段階3/4の共有・保管場所・共有解除は未実装。

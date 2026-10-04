@@ -23,10 +23,22 @@ public abstract class PlacementConfigurationGuiMixin extends GuiListBase<SubRegi
         return mcmateriallist$work;
     }
     @Inject(method = "getBrowserHeight()I", at = @At("RETURN"), cancellable = true, require = 1)
-    private void reserveWork(CallbackInfoReturnable<Integer> callback) { callback.setReturnValue(Math.max(0, callback.getReturnValue() - Phase0Ui.FOOTER_HEIGHT - 24)); }
-    @ModifyArg(method = "createListWidget(II)Lfi/dy/masa/litematica/gui/widgets/WidgetListPlacementSubRegions;", at = @At(value = "INVOKE", target = "Lfi/dy/masa/litematica/gui/widgets/WidgetListPlacementSubRegions;<init>(IIIILfi/dy/masa/litematica/gui/GuiPlacementConfiguration;)V"), index = 1, require = 1)
-    private int shiftBrowser(int y) { return y + 24; }
+    private void reserveWork(CallbackInfoReturnable<Integer> callback) { callback.setReturnValue(Math.max(0, callback.getReturnValue() - (mcmateriallist$session().compact() ? 0 : 66))); }
+    @Inject(method = "initGui()V", at = @At("HEAD"), require = 1)
+    private void positionBrowser(CallbackInfo callback) {
+        int y = mcmateriallist$session().compact() ? 62 : 86;
+        if (getListY() != y) {
+            var view = dev.mcmateriallist.fabric.client.work.WorkListViewState.capture(getListWidget());
+            setListPosition(getListX(), y);
+            reCreateListWidget();
+            view.restore(getListWidget());
+        }
+    }
     @Inject(method = "initGui()V", at = @At("TAIL"), require = 1)
-    private void addWork(CallbackInfo callback) { Phase0Ui.addPlacementButton(this, placement); mcmateriallist$session().toolbar(); }
+    private void addWork(CallbackInfo callback) {
+        Phase0Ui.addPlacementButton(this, placement);
+        if (mcmateriallist$session().compact()) ((GuiButtonsAccess) this).mcmateriallist$buttons().getLast().setY(getScreenHeight() - 22);
+        mcmateriallist$session().toolbar();
+    }
     @Override public void drawContents(GuiContext ctx, int mouseX, int mouseY, float ticks) { super.drawContents(ctx, mouseX, mouseY, ticks); mcmateriallist$session().footer(ctx); }
 }

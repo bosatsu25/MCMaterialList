@@ -15,9 +15,10 @@ public record MaterialRowLayout(int totalX, int missingX, int availableX,
         int ignore = width - ignoreWidth;
         int done = ignore - 22;
         int notice = done - 14;
-        int available = notice - 24 - availableWidth;
-        int missing = available - 24 - missingWidth;
-        int total = missing - 24 - totalWidth;
-        return Optional.of(new MaterialRowLayout(total, missing, available, notice, done, ignore, total - 52));
+        int nameWidth = Math.min(192, width - (int) required);
+        int total = 52 + nameWidth;
+        int missing = total + totalWidth + 24;
+        int available = missing + missingWidth + 24;
+        return Optional.of(new MaterialRowLayout(total, missing, available, notice, done, ignore, nameWidth));
     }
 }
