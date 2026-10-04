@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "environment": "client",
   "entrypoints": {
-    "fabric-client-gametest": ["dev.mcmateriallist.fabric.test.Phase0ClientTest"]
+    "fabric-client-gametest": ["dev.mcmateriallist.fabric.test.Phase0ClientTest", "dev.mcmateriallist.fabric.test.Phase1ClientTest"]
   },
   "mixins": ["mcmateriallist.test.mixins.json"]
 }

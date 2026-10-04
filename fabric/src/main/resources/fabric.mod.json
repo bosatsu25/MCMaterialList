@@ -3,7 +3,7 @@
   "id": "mcmateriallist",
   "version": "${version}",
   "name": "MCMaterialList",
-  "description": "Phase 0 Litematica compatibility spike",
+  "description": "Local material and region work state integrated with Litematica",
   "environment": "*",
   "entrypoints": {
     "main": ["dev.mcmateriallist.fabric.MCMaterialList"],

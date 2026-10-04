@@ -36,3 +36,8 @@ tasks.register('verifyPhase0') {
     description = 'Build, test two real client processes, and boot an isolated dedicated server.'
     dependsOn 'build', ':fabric:verifyClientRestart', ':fabric:verifyServerSmoke'
 }
+tasks.register('verifyPhase1') {
+    group = 'verification'
+    description = 'Run core work/persistence tests and Phase 0 + Phase 1 in two real client processes and an isolated server.'
+    dependsOn 'verifyPhase0'
+}
