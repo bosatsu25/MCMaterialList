@@ -77,7 +77,8 @@ public final class RegionWorkSession {
         toolbarStart = compact() ? 18 + screen.getStringWidth(fi.dy.masa.malilib.util.StringUtils.translate("litematica.gui.label.schematic_placement.sub_regions", screen.getSchematicPlacement().getSubRegionCount())) : 12;
         int end = compact() ? ((GuiButtonsAccess) screen).mcmateriallist$buttons().stream().filter(button -> button.getY() == 44 && button.getX() > toolbarStart)
             .mapToInt(button -> button.getX()).min().orElse(screen.getScreenWidth() - 154) : screen.getScreenWidth() - 148;
-        toolbarWidth = Math.max(20, (end - toolbarStart) / (compact() ? 3 : 4) - 2);
+        int slots = status == StoreStatus.RECOVERY_REQUIRED || (confirmed != null && !confirmed.archived().isEmpty()) ? 4 : 3;
+        toolbarWidth = Math.max(20, (end - toolbarStart) / (compact() ? 3 : slots) - 2);
         toolbarY = compact() ? 44 : 64;
         refreshButton = add(0, text(status == StoreStatus.MISSING ? "track" : "refresh"), (button, mouse) -> refresh());
         add(1, text("hide_done", hideDone ? "ON" : "OFF"), (button, mouse) -> { hideDone = !hideDone; screen.initGui(); });

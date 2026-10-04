@@ -46,6 +46,15 @@ final class UiParityEvidence {
         var added = controls.stream().filter(control -> control.getHoverStrings().stream().anyMatch(labels::contains)
             || "MCMaterialList".equals(((dev.mcmateriallist.fabric.test.mixin.ButtonTestAccess) control).phase0Text())).toList();
         require(added.size() == 4 + (recovery || archived > 0 ? 1 : 0), "Added work/diagnostic controls not identified by complete localized labels");
+        if (screen instanceof dev.mcmateriallist.fabric.client.region.RegionWorkScreen region && !region.mcmateriallist$session().compact()) {
+            var toolbar = added.stream().filter(control -> !"MCMaterialList".equals(((dev.mcmateriallist.fabric.test.mixin.ButtonTestAccess) control).phase0Text()))
+                .sorted(java.util.Comparator.comparingInt(WidgetBase::getX)).toList();
+            int slots = recovery || archived > 0 ? 4 : 3;
+            require(toolbar.size() == slots, "Narrow region toolbar has the wrong active slot count");
+            var last = toolbar.getLast();
+            int unused = screen.getScreenWidth() - 148 - (last.getX() + last.getWidth());
+            require(unused >= 0 && unused <= slots + 2, "Narrow region toolbar reserves unused control space: slots=" + slots + ", unused=" + unused);
+        }
         for (int i = 0; i < controls.size(); i++) {
             var control = controls.get(i);
             if (!added.contains(control)) continue;
@@ -67,6 +76,11 @@ final class UiParityEvidence {
         return screen instanceof dev.mcmateriallist.fabric.client.material.MaterialWorkScreen
             ? dev.mcmateriallist.fabric.client.material.MaterialWorkSession.text(key, args)
             : dev.mcmateriallist.fabric.client.region.RegionWorkSession.text(key, args);
+    }
+    static fi.dy.masa.malilib.gui.button.ButtonBase workControl(GuiBase screen, String key, Object... args) {
+        String label = workText(screen, key, args);
+        return ((GuiBaseTestAccess) screen).phase0Buttons().stream().filter(control -> control.getHoverStrings().contains(label))
+            .findFirst().orElseThrow(() -> new AssertionError("Missing localized work control: " + key));
     }
     static boolean overlaps(WidgetBase a, WidgetBase b) {
         return a.getX() < b.getX() + b.getWidth() && a.getX() + a.getWidth() > b.getX()
