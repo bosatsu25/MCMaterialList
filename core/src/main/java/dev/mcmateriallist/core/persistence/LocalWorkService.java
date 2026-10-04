@@ -27,6 +27,15 @@ public final class LocalWorkService implements AutoCloseable {
         return submit(() -> refreshMaterialsNow(snapshot),
             () -> new MaterialRefreshResult(StoreResult.failure(StoreStatus.CLOSED), null));
     }
+    public CompletableFuture<RegionRefreshResult> refreshRegions(WorkSnapshot snapshot) {
+        return submit(() -> refreshRegionsNow(snapshot),
+            () -> new RegionRefreshResult(StoreResult.failure(StoreStatus.CLOSED), null));
+    }
+    /** Deliberately accept the active NEW definition, never transfer archived work. */
+    public CompletableFuture<UpdateResult> acknowledgeRegion(LocalPlacementId placement, RegionTaskId task) {
+        return submit(() -> acknowledgeRegionNow(placement, task),
+            () -> new UpdateResult(StoreResult.failure(StoreStatus.CLOSED), null));
+    }
     public CompletableFuture<UpdateResult> update(LocalPlacementId placement, TaskId task, TaskCommand command, UUID actor, Instant time) {
         return submit(() -> updateNow(placement, task, command, actor, time), () -> new UpdateResult(StoreResult.failure(StoreStatus.CLOSED), null));
     }
@@ -38,6 +47,10 @@ public final class LocalWorkService implements AutoCloseable {
     }
     private RefreshResult refreshNow(WorkSnapshot snapshot) {
         MaterialRefreshResult material = refreshMaterialsNow(snapshot);
+        RegionRefreshResult region = refreshRegionsNow(snapshot);
+        return new RefreshResult(material.storage(), region.storage(), material.reconciliation(), region.reconciliation());
+    }
+    private RegionRefreshResult refreshRegionsNow(WorkSnapshot snapshot) {
         StoreResult region = store.load(snapshot.placementId(), DatasetKind.REGIONS);
         Reconciliation<RegionWorkDataset, RegionTaskId> regionChanges = null;
         // Each side can succeed independently; a corrupt region never resets or blocks valid material work.
@@ -48,7 +61,22 @@ public final class LocalWorkService implements AutoCloseable {
                 if (!region.ok() || regionChanges.dataset() != before) region = store.save(regionChanges.dataset(), region.ok() ? before.generation() : -1);
             }
         } catch (IllegalArgumentException | ArithmeticException exception) { region = StoreResult.failure(StoreStatus.INVALID_DEFINITION); }
-        return new RefreshResult(material.storage(), region, material.reconciliation(), regionChanges);
+        return new RegionRefreshResult(region, regionChanges);
+    }
+    private UpdateResult acknowledgeRegionNow(LocalPlacementId placement, RegionTaskId task) {
+        StoreResult loaded = store.load(placement, DatasetKind.REGIONS);
+        if (!loaded.ok()) return new UpdateResult(loaded, null);
+        RegionWorkDataset before = (RegionWorkDataset) loaded.dataset();
+        if (task == null || !before.states().containsKey(task))
+            return new UpdateResult(loaded, new TransitionResult.Rejected(task == null ? TransitionResult.Reason.INVALID_INPUT : TransitionResult.Reason.UNKNOWN_TASK));
+        try {
+            RegionWorkDataset accepted = before.acknowledge(task);
+            if (accepted == before) return new UpdateResult(loaded, new TransitionResult.Unchanged(before.states().get(task)));
+            StoreResult saved = store.save(accepted, before.generation());
+            return new UpdateResult(saved, saved.ok() ? new TransitionResult.Changed(accepted.states().get(task)) : null);
+        } catch (ArithmeticException exception) {
+            return new UpdateResult(loaded, new TransitionResult.Rejected(TransitionResult.Reason.VERSION_EXHAUSTED));
+        }
     }
     private MaterialRefreshResult refreshMaterialsNow(WorkSnapshot snapshot) {
         StoreResult stored = store.load(snapshot.placementId(), DatasetKind.MATERIALS);

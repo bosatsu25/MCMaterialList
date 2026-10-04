@@ -20,6 +20,25 @@ public final class PlacementWorkAdapter {
     public record Capture(Status status, WorkSnapshot snapshot) {}
     private PlacementWorkAdapter() {}
 
+    /** Region definitions have no dependency on material calculation/readiness. */
+    public static Capture captureRegions(SchematicPlacement placement) {
+        if (!Compatibility.isSupported()) return failure(Status.UNSUPPORTED);
+        if (placement == null) return failure(Status.UNREGISTERED);
+        var active = DataManager.getSchematicPlacementManager().getAllSchematicsPlacements();
+        if (active.stream().noneMatch(other -> other == placement)) return failure(Status.UNREGISTERED);
+        dev.mcmateriallist.core.LocalPlacementId identity;
+        try { identity = PlacementIdentity.get(placement, active); }
+        catch (IllegalStateException exception) { return failure(Status.UNSAVED_OR_DUPLICATE); }
+        try {
+            var schematic = placement.getSchematic();
+            var origins = schematic.getAreaPositions(); var sizes = schematic.getAreaSizes();
+            if (!origins.keySet().equals(sizes.keySet())) return failure(Status.INVALID_DEFINITION);
+            var regions = new ArrayList<RegionDescriptor>();
+            for (var key : origins.keySet()) regions.add(new RegionDescriptor(key, vector(origins.get(key)), vector(sizes.get(key))));
+            return new Capture(Status.OK, new WorkSnapshot(identity, java.util.List.of(), regions));
+        } catch (IllegalArgumentException | NullPointerException exception) { return failure(Status.INVALID_DEFINITION); }
+    }
+
     public static Capture capture(SchematicPlacement placement, MaterialListBase materials) {
         if (!Compatibility.isSupported()) return failure(Status.UNSUPPORTED);
         if (placement == null) return failure(Status.UNREGISTERED);

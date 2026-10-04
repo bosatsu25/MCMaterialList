@@ -99,6 +99,8 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             context.getInput().typeChars("採掘担当");
             context.getInput().pressKey(GLFW.GLFW_KEY_ENTER);
             context.getInput().typeChars("倉庫に保管");
+            click(context, context.computeOnClient(mc -> button(detail, "Claim"))); idle(context, session);
+            check(session.state(blackstone).note().isEmpty() && context.computeOnClient(mc -> ((MaterialDetailTestAccess) detail).phase2Note().getValueWrapper()).equals("採掘担当\n倉庫に保管"), "Material Claim implicitly saved or discarded note draft");
             click(context, context.computeOnClient(mc -> button(detail, "Save note"))); idle(context, session);
             check(session.state(blackstone).note().equals("採掘担当\n倉庫に保管"), "Multiline UTF-8 note was not saved");
             click(context, context.computeOnClient(mc -> button(detail, "Release"))); idle(context, session);

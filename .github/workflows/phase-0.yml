@@ -1,4 +1,4 @@
-name: Phase 0/1 regression and Phase 2A material UI
+name: Phase 0/1 regression and Phase 2A/2B local UI
 on:
   push:
   pull_request:
@@ -22,8 +22,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: phase-2a-test-evidence
+          name: phase-2b-test-evidence
           path: |
             core/build/test-results/test/*.xml
             fabric/build/run/clientGameTest/screenshots/*.png
+            fabric/build/phase0-fixture/phase2-region/expected-regions.json
           if-no-files-found: ignore
