@@ -20,7 +20,17 @@ public record RegionWorkDataset(DatasetId id, LocalPlacementId placementId, long
     public static RegionWorkDataset create(LocalPlacementId placement) { return new RegionWorkDataset(DatasetId.create(), placement, 0, Map.of(), Map.of(), Map.of(), Set.of()); }
     @Override public DatasetKind kind() { return DatasetKind.REGIONS; }
     @Override public Progress progress() { return Progress.calculate(states.values()); }
-    public RegionWorkDataset withState(TaskState state) {
+    public DatasetMutation<RegionWorkDataset> apply(RegionTaskId key, TaskCommand command, java.util.UUID actor, java.time.Instant time) {
+        if (!states.containsKey(key)) return new DatasetMutation<>(this, new TransitionResult.Rejected(TransitionResult.Reason.UNKNOWN_TASK));
+        if (reviewRequired.contains(key)) return new DatasetMutation<>(this, new TransitionResult.Rejected(TransitionResult.Reason.REVIEW_REQUIRED));
+        TransitionResult result = TaskTransitions.apply(states.get(key), command, actor, time);
+        if (result instanceof TransitionResult.Changed changed) {
+            if (generation == Long.MAX_VALUE) return new DatasetMutation<>(this, new TransitionResult.Rejected(TransitionResult.Reason.VERSION_EXHAUSTED));
+            return new DatasetMutation<>(withState(changed.state()), result);
+        }
+        return new DatasetMutation<>(this, result);
+    }
+    private RegionWorkDataset withState(TaskState state) {
         if (!(state.taskId() instanceof RegionTaskId key) || !states.containsKey(key)) throw new IllegalArgumentException("Unknown task");
         if (reviewRequired.contains(key)) throw new IllegalArgumentException("Reevaluate mismatched region first");
         if (state.equals(states.get(key))) return this;

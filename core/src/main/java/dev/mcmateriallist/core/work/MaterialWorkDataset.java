@@ -19,7 +19,16 @@ public record MaterialWorkDataset(DatasetId id, LocalPlacementId placementId, lo
     public static MaterialWorkDataset create(LocalPlacementId placement) { return new MaterialWorkDataset(DatasetId.create(), placement, 0, Map.of(), Map.of(), Map.of()); }
     @Override public DatasetKind kind() { return DatasetKind.MATERIALS; }
     @Override public Progress progress() { return Progress.calculate(states.values()); }
-    public MaterialWorkDataset withState(TaskState state) {
+    public DatasetMutation<MaterialWorkDataset> apply(MaterialTaskId key, TaskCommand command, java.util.UUID actor, java.time.Instant time) {
+        if (!states.containsKey(key)) return new DatasetMutation<>(this, new TransitionResult.Rejected(TransitionResult.Reason.UNKNOWN_TASK));
+        TransitionResult result = TaskTransitions.apply(states.get(key), command, actor, time);
+        if (result instanceof TransitionResult.Changed changed) {
+            if (generation == Long.MAX_VALUE) return new DatasetMutation<>(this, new TransitionResult.Rejected(TransitionResult.Reason.VERSION_EXHAUSTED));
+            return new DatasetMutation<>(withState(changed.state()), result);
+        }
+        return new DatasetMutation<>(this, result);
+    }
+    private MaterialWorkDataset withState(TaskState state) {
         if (!(state.taskId() instanceof MaterialTaskId key) || !states.containsKey(key)) throw new IllegalArgumentException("Unknown task");
         if (state.equals(states.get(key))) return this;
         var updated = new HashMap<>(states); updated.put(key, state);

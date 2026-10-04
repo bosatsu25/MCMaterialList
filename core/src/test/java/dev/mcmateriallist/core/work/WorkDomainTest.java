@@ -57,7 +57,7 @@ class WorkDomainTest {
         var first = dataset.reconcile(List.of(material("minecraft:stone", 1000), material("minecraft:glass", 1)));
         dataset = first.dataset();
         TaskState done = changed(dataset.states().get(stone), new TaskCommand.SetDone(true));
-        dataset = dataset.withState(done);
+        dataset = dataset.apply(stone, new TaskCommand.SetDone(true), actor, time).dataset();
         var next = dataset.reconcile(List.of(material("minecraft:glass", 2), material("minecraft:stone", 1200), material("minecraft:dirt", 3)));
         assertEquals(done, next.dataset().states().get(stone)); assertTrue(next.changed().contains(stone));
         assertEquals(1, next.added().size()); assertEquals(33, next.dataset().progress().percentage());
@@ -73,7 +73,7 @@ class WorkDomainTest {
         dataset = dataset.reconcile(descriptors).dataset();
         RegionTaskId second = dataset.definitions().values().stream().filter(d -> d.descriptor().key().equals("Region 2")).findFirst().orElseThrow().id();
         TaskState done = changed(dataset.states().get(second), new TaskCommand.SetDone(true));
-        dataset = dataset.withState(done);
+        dataset = dataset.apply(second, new TaskCommand.SetDone(true), actor, time).dataset();
         var unchanged = dataset.reconcile(List.of(descriptors.get(2), descriptors.get(1), descriptors.get(0)));
         assertEquals(done, unchanged.dataset().states().get(second));
         var renamed = dataset.reconcile(List.of(region("Renamed", 10), region("Region 1", 0)));
@@ -85,6 +85,19 @@ class WorkDomainTest {
         var ambiguous = dataset.reconcile(List.of(region("Region 1", 0), region("Region 1", 0)));
         assertEquals(2, ambiguous.reviewRequired().size());
         assertEquals(0, ambiguous.dataset().progress().completed());
+    }
+
+    @Test void datasetCommandsRejectUnknownTasksAndRequireRegionReevaluation() {
+        var empty = MaterialWorkDataset.create(LocalPlacementId.create());
+        var result = empty.apply(stone, new TaskCommand.SetDone(true), actor, time);
+        assertEquals(empty, result.dataset());
+        assertEquals(TransitionResult.Reason.UNKNOWN_TASK, ((TransitionResult.Rejected) result.result()).reason());
+        var dataset = RegionWorkDataset.create(LocalPlacementId.create()).reconcile(List.of(region("Region 1", 0))).dataset();
+        dataset = dataset.reconcile(List.of(region("Region 1", 1))).dataset();
+        RegionTaskId key = dataset.definitions().keySet().iterator().next();
+        assertEquals(TransitionResult.Reason.REVIEW_REQUIRED, ((TransitionResult.Rejected) dataset.apply(key, new TaskCommand.SetDone(true), actor, time).result()).reason());
+        dataset = dataset.acknowledge(key);
+        assertInstanceOf(TransitionResult.Changed.class, dataset.apply(key, new TaskCommand.SetDone(true), actor, time).result());
     }
 
     private TaskState changed(TaskState state, TaskCommand command) {

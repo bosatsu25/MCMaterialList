@@ -1,1 +1,5 @@
-// Deliberately no Minecraft, Fabric, Gson, or Litematica dependency.
+// No Minecraft, Fabric or Litematica dependency. JSON is a local persistence boundary.
+dependencies {
+    implementation 'com.google.code.gson:gson:2.14.0'
+    compileOnly 'com.google.errorprone:error_prone_annotations:2.48.0'
+}
