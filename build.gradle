@@ -41,3 +41,8 @@ tasks.register('verifyPhase1') {
     description = 'Run core work/persistence tests and Phase 0 + Phase 1 in two real client processes and an isolated server.'
     dependsOn 'verifyPhase0'
 }
+tasks.register('verifyPhase2') {
+    group = 'verification'
+    description = 'Run Phase 0/1 regressions, durable material UI interactions and fresh-process restoration, plus server isolation.'
+    dependsOn 'verifyPhase1'
+}

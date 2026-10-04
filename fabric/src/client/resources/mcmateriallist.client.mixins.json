@@ -3,6 +3,6 @@
   "package": "dev.mcmateriallist.fabric.client.mixin",
   "plugin": "dev.mcmateriallist.fabric.client.Phase0MixinPlugin",
   "compatibilityLevel": "JAVA_25",
-  "client": ["MaterialListGuiMixin", "PlacementConfigurationGuiMixin", "MaterialListPlacementAccess", "MaterialListReadinessMixin", "PlacementMaterialRefreshMixin"],
+  "client": ["MaterialListGuiMixin", "PlacementConfigurationGuiMixin", "MaterialListPlacementAccess", "MaterialListReadinessMixin", "PlacementMaterialRefreshMixin", "MaterialListWidgetAccess", "MaterialListHeightMixin", "MaterialRowHeightMixin", "MaterialRowMixin"],
   "injectors": {"defaultRequire": 0}
 }

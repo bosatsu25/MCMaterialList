@@ -7,4 +7,5 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 @Mixin(value = ButtonBase.class, remap = false)
 public interface ButtonTestAccess {
     @Accessor("displayString") String phase0Text();
+    @Accessor("enabled") boolean phase2Enabled();
 }

@@ -1,10 +1,14 @@
 # MCMaterialList
 
-Local material gathering and region building work state integrated with Litematica. Phase 1 implements assignment, completion, Japanese notes, progress, conservative reconciliation and independent local JSON snapshots. Final task controls and multiplayer synchronization remain future work.
+Local material gathering and region building work state integrated with Litematica. Phase 2A adds durable material-row assignment, completion, notes, progress and information controls. Region task controls and multiplayer synchronization remain future work.
 
 Pinned baseline: Minecraft **26.2**, Fabric Loader **0.19.3**, Fabric API **0.154.0+26.2**, Litematica **0.28.3**, MaLiLib **0.29.2**, JDK **25**, Gradle **9.7.1**, Loom **1.17.20**.
 
-The existing `MCMaterialList` footer buttons retain the Phase 0 message on ordinary clicks. **Shift-click** on placement configuration or its material list to explicitly create/load/refresh local work and display material/region progress. The tooltip marks this as a temporary Phase 1 diagnostic. It does not provide the final assignment or completion UI.
+Open a saved placement's material list and select **Track materials** to start local tracking. Opening existing work only reads it. Click a face for Claim/Release and a multiline note (explicit **Save note**); the green check completes a row and the red X undoes completion. Show Info expands rows; Hide Done only filters the view. Progress always counts all current tracked material types. Counts, Ignore, Refresh, HUD and exports retain upstream behavior.
+
+**Refresh work** reconciles the latest completed upstream observation and preserves work. Definition changes show a notice; removed definitions are kept in read-only Archived work. Storage failure disables editing and retains the last confirmed view. Recovery requires **Recover backup**, then **Confirm recovery**, and may lose the last action. Material controls never create/change a region snapshot or alter `.litematic` files.
+
+The existing `MCMaterialList` footer buttons retain the Phase 0 message on ordinary clicks. **Shift-click** on either screen still runs the temporary Phase 1 diagnostic, explicitly creating/loading/refreshing both local datasets.
 
 ## Build and verification
 
@@ -15,13 +19,13 @@ Use JDK 25 as `JAVA_HOME`:
 .\gradlew.bat :fabric:verifyClientRestart
 # Only after accepting https://aka.ms/MinecraftEULA:
 .\gradlew.bat :fabric:verifyServerSmoke -PacceptMinecraftEula=true
-# Full Phase 0 regression plus Phase 1 work-state verification:
-.\gradlew.bat clean verifyPhase1 -PacceptMinecraftEula=true
+# Full Phase 0/1 regression and Phase 2A material UI verification:
+.\gradlew.bat clean verifyPhase2 -PacceptMinecraftEula=true
 ```
 
-`verifyPhase0` remains available and runs the strengthened client suite. Linux/macOS use `./gradlew`; Linux client tests need a display, for example `xvfb-run -a ./gradlew verifyPhase1 -PacceptMinecraftEula=true`.
+`verifyPhase0` and `verifyPhase1` remain available and run the strengthened client suite. Linux/macOS use `./gradlew`; Linux client tests need a display, for example `xvfb-run -a ./gradlew verifyPhase2 -PacceptMinecraftEula=true`.
 
-The distribution is `fabric/build/libs/fabric-0.1.0-phase.1.jar` and includes the core library. Fabric API is required on both sides; pinned Litematica/MaLiLib are client-only. Unsupported or missing client mods disable the adapter. The dedicated server needs neither optional client mod. `:fabric:runClient` launches the normal development client. Minecraft 26.2 is unobfuscated: Loom uses `jar`, without external mappings or `remapJar`.
+The distribution is `fabric/build/libs/fabric-0.1.0-phase.2a.jar` and includes the core library. Fabric API is required on both sides; pinned Litematica/MaLiLib are client-only. Unsupported or missing client mods disable the adapter. The dedicated server needs neither optional client mod. `:fabric:runClient` launches the normal development client. Minecraft 26.2 is unobfuscated: Loom uses `jar`, without external mappings or `remapJar`.
 
 ## Structure and persistence
 
@@ -36,4 +40,4 @@ Data lives under `config/mcmateriallist/placements/<placement-uuid>/materials.js
 
 Test worlds, synthetic fixtures, screenshots and traces remain under ignored build directories. Do not distribute these as user data.
 
-See [Phase 1 design, storage contract and evidence](docs/phase-1-local-work-state.md), [Phase 0 evidence](docs/phase-0-compatibility-spike.md), and the [implementation plan](docs/superpowers/plans/2026-10-04-phase-1-local-work-state.md).
+See the [authoritative v0.1 design](litematica-collaboration-design-v0.1.md), [Phase 2A UI and verification](docs/phase-2-litematica-ui.md), [Phase 1 storage contract](docs/phase-1-local-work-state.md), and [Phase 0 evidence](docs/phase-0-compatibility-spike.md).

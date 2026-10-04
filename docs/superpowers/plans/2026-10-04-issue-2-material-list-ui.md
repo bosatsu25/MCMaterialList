@@ -44,23 +44,25 @@
 
 **Interfaces:** A per-screen session loads/reconciles/recover/updates through TaskCommand; rows resolve state by registry ID. List height changes through the same session's Show Info state; confirmation results update the screen and list together.
 
-- [ ] Add real client assertions that Track materials, completion/undo, head/detail Claim/Release/notes, information notice and Show Info have intended durable effects; observe missing-feature failure.
-- [ ] Add version-gated toolbar/footer and row controls; preserve upstream draw/count/Ignore/sort handlers and original diagnostic.
-- [ ] Display pending/readiness/storage failure and explicit recovery confirmation; no optimistic completion. Surface archived and definition-changed work.
-- [ ] Verify client compilation, real mouse events and prior diagnostics; commit the tested unit.
+- [x] Add real client assertions that Track materials, completion/undo, head/detail Claim/Release/notes, information notice and Show Info have intended durable effects; observe missing-feature failure.
+- [x] Add version-gated toolbar/footer and row controls; preserve upstream draw/count/Ignore/sort handlers and original diagnostic.
+- [x] Display pending/readiness/storage failure and explicit recovery confirmation; no optimistic completion. Surface archived and definition-changed work.
+- [x] Verify client compilation, real mouse events and prior diagnostics; commit the tested unit.
 
 ### Task 3: Acceptance fixture, regression and hosted gate
 
 **Files:** new Phase 2A client fixture/restart suite, Gradle `verifyPhase2`, CI composition, `docs/phase-2-litematica-ui.md` and usage README.
 
-- [ ] Build a real upstream-counted 19-material fixture; complete rows 3/4/10/11 and assert 4/19 (21%), red undo actions and completion overlays, Missing=Total/Available=0, independent notes/counts and unchanged placement flags.
-- [ ] Verify sorting/Ignore/Hide Available/Refresh/search retain identity/progress, Show Info height/hit alignment, fixed-size unavailable skins, long names, exports and fresh-process restoration.
-- [ ] Capture 1920x1080 screenshots and relevant scale evidence; original fixtures remain regression coverage, not replacements.
-- [ ] Run targeted tests then `clean verifyPhase2 -PacceptMinecraftEula=true`; inspect JAR, diff and docs.
-- [ ] Obtain a fresh independent branch review as required by the execution skill; fix material issues with regression tests.
+- [x] Build a real upstream-counted 19-material fixture; complete rows 3/4/10/11 and assert 4/19 (21%), red undo actions and completion overlays, Missing=Total/Available=0, independent notes/counts and unchanged placement flags.
+- [x] Verify sorting/Ignore/Hide Available/Refresh/search retain identity/progress, Show Info height/hit alignment, fixed-size unavailable skins, long names, exports and fresh-process restoration.
+- [x] Capture 1920x1080 screenshots and relevant scale evidence; original fixtures remain regression coverage, not replacements.
+- [x] Run targeted tests then `clean verifyPhase2 -PacceptMinecraftEula=true`; inspect JAR, diff and docs.
+- [x] Obtain a fresh independent branch review as required by the execution skill; fix material issues with regression tests.
 - [ ] Commit/push, create PR with `Closes #2`, attach it, wait for hosted green CI and mergeability, then squash merge, update main and parent checklist. Do not mark other Phase 2 Issues complete.
 
 ## Execution record
 
 - Source recovery: PR #18 merged and Issue #17 closed; restored source matches the completely read PR blob. The Phase 0/1 reports and all 18 design acceptance criteria were read and mapped to the roadmap. No product-design contradiction was found for Issue #2.
 - Task 1: test-first compilation failed on the missing refreshMaterials API and MaterialRowLayout; after implementation `:core:test` exited 0, 28 tests with no failures/errors/skips. This is core evidence; client/hosted gates remain pending.
+- Task 2: the real nineteen-material test initially timed out waiting for the missing Track materials control. Durable screen/row/detail controls, queued client publication, session filters/notices and explicit recovery were then implemented. No region control or product networking was added.
+- Task 3: final Windows clean verifyPhase2 exited 0 in 1m47s: 28 core tests, original Phase 0/1 suites, Phase 2A real UI and exact fresh-process snapshot restoration, build/isolation and dedicated server all passed. JAR/diff/docs were inspected. Independent review issues were fixed and re-reviewed. Hosted PR/merge remains the final workflow step.
