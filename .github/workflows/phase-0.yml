@@ -1,4 +1,4 @@
-name: Phase 0 compatibility
+name: Phase 0 regression and Phase 1 work state
 on:
   push:
   pull_request:
@@ -18,11 +18,11 @@ jobs:
       - run: chmod +x gradlew
       - run: ./gradlew --no-daemon clean build
       - name: Real client restart and isolated dedicated server
-        run: xvfb-run -a ./gradlew --no-daemon verifyPhase0 -PacceptMinecraftEula=true
+        run: xvfb-run -a ./gradlew --no-daemon verifyPhase1 -PacceptMinecraftEula=true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: phase-0-test-evidence
+          name: phase-1-test-evidence
           path: |
             core/build/test-results/test/*.xml
             fabric/build/run/clientGameTest/screenshots/*.png
