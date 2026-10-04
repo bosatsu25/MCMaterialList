@@ -73,7 +73,10 @@ public final class RegionWorkSession {
         if (status == StoreStatus.RECOVERY_REQUIRED) {
             recoverButton = add(3, text(recoveryConfirmed ? "confirm_recovery" : "recover"), (button, mouse) -> {
                 if (!recoveryConfirmed) { recoveryConfirmed = true; screen.addMessage(MessageType.WARNING, text("recovery_warning")); screen.initGui(); }
-                else if (!pending && ready()) await(MCMaterialListClient.work().recover(placement, DatasetKind.REGIONS), this::publish);
+                else if (!pending && ready()) {
+                    recoveryConfirmed = false;
+                    await(MCMaterialListClient.work().recover(placement, DatasetKind.REGIONS), this::publish);
+                }
             });
         } else if (confirmed != null && !confirmed.archived().isEmpty()) {
             add(3, text("archived", confirmed.archived().size()), (button, mouse) -> GuiBase.openGui(new RegionArchiveScreen(screen, this)));
@@ -122,6 +125,7 @@ public final class RegionWorkSession {
     public void detail(RegionTaskId id, String name) { GuiBase.openGui(new RegionDetailScreen(screen, this, id, name)); }
     private void publish(StoreResult result) {
         status = result.status();
+        if (status != StoreStatus.RECOVERY_REQUIRED) recoveryConfirmed = false;
         if (result.ok() && result.dataset() instanceof RegionWorkDataset dataset) confirmed = dataset;
         if (!result.ok() && status != StoreStatus.MISSING) feedbackTarget().addMessage(MessageType.ERROR, text("storage", status.name()));
     }

@@ -246,6 +246,21 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
         click(context, context.computeOnClient(mc -> button(screen, "Refresh work"))); idle(context, work);
         check(work.dataset().progress().equals(new Progress(5, 62, 8)) && work.id("Region 1").equals(oldId), "Explicit region recovery/refresh changed progress or identity");
         context.takeScreenshot("phase2-regions-explicit-recovery");
+        var recovered = work.dataset();
+        byte[] secondDamage = "{ second region incident".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Files.write(primary, secondDamage);
+        click(context, context.computeOnClient(mc -> button(screen, "Refresh work")));
+        context.waitFor(mc -> !work.pending() && work.status() == StoreStatus.RECOVERY_REQUIRED);
+        check(work.dataset().equals(recovered), "Second region incident changed confirmed state");
+        click(context, context.computeOnClient(mc -> ((GuiBaseTestAccess) screen).phase0Buttons().stream()
+            .filter(candidate -> List.of("Recover backup", "Confirm recovery").contains(ChatFormatting.stripFormatting(((ButtonTestAccess) candidate).phase0Text())))
+            .findFirst().orElseThrow()));
+        context.waitFor(mc -> !work.pending());
+        check(Arrays.equals(secondDamage, Files.readAllBytes(primary)), "Second region recovery first click changed damaged primary without fresh confirmation");
+        click(context, context.computeOnClient(mc -> button(screen, "Confirm recovery"))); idle(context, work);
+        click(context, context.computeOnClient(mc -> button(screen, "Refresh work"))); idle(context, work);
+        check(work.dataset().equals(recovered), "Second region recovery changed exact state");
+        context.takeScreenshot("phase2-regions-second-recovery");
         check(Arrays.equals(materialBytes, Files.readAllBytes(primary.resolveSibling("materials.json"))), "Region operations rewrote material snapshot");
         Files.write(primary.getParent().resolveSibling("region-material-baseline.bin"), materialBytes);
     }
