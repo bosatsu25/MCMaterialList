@@ -30,6 +30,7 @@ import net.minecraft.network.chat.Component;
 public final class MaterialWorkSession {
     private final GuiMaterialList screen;
     private final LocalPlacementId placement;
+    private final dev.mcmateriallist.fabric.client.shared.SharedWorkBackend shared;
     private MaterialWorkDataset confirmed;
     private StoreStatus status;
     private boolean pending;
@@ -40,6 +41,8 @@ public final class MaterialWorkSession {
     private Set<MaterialTaskId> changed = Set.of();
     private ButtonGeneric refreshButton;
     private ButtonGeneric recoverButton;
+    private long sharedVersion = -1;
+    private boolean sharedRebuild;
     public MaterialWorkSession(GuiMaterialList screen) {
         this.screen = screen;
         LocalPlacementId identity = null;
@@ -49,26 +52,31 @@ public final class MaterialWorkSession {
             identity = PlacementIdentity.get(owner, DataManager.getSchematicPlacementManager().getAllSchematicsPlacements());
         } catch (IllegalStateException failure) { status = StoreStatus.INVALID_DEFINITION; }
         placement = identity;
+        shared = new dev.mcmateriallist.fabric.client.shared.SharedWorkBackend(MCMaterialListClient.shared(), placement, DatasetKind.MATERIALS,
+            () -> PlacementWorkAdapter.owner(screen.getMaterialList()), screen::getMaterialList, this::ready);
     }
+    public dev.mcmateriallist.fabric.client.shared.SharedWorkBackend shared() { return shared; }
     public static String text(String key, Object... args) { return Component.translatable("mcmateriallist.material." + key, args).getString(); }
     public MaterialWorkDataset dataset() { return confirmed; }
     public StoreStatus status() { return status; }
-    public boolean pending() { return pending; }
+    public boolean pending() { return pending || shared.pending(); }
     public boolean showInfo() { return showInfo; }
     public boolean hideDone() { return hideDone; }
     public boolean compact() {
         return WorkScreenGeometry.compact(screen.getScreenWidth(), screen.getScreenHeight())
             && status != StoreStatus.RECOVERY_REQUIRED && (confirmed == null || confirmed.archived().isEmpty());
     }
-    public boolean changed(MaterialTaskId id) { return changed.contains(id); }
-    public TaskState state(MaterialTaskId id) { return confirmed == null ? null : confirmed.states().get(id); }
+    public boolean changed(MaterialTaskId id) { return shared.selected() ? shared.review(id) : changed.contains(id); }
+    public TaskState state(MaterialTaskId id) { return shared.selected() ? shared.state(id) : confirmed == null ? null : confirmed.states().get(id); }
+    public Progress progress() { return shared.selected() ? shared.progress() : confirmed == null ? null : confirmed.progress(); }
     public boolean ready() {
         return placement != null && MCMaterialListClient.work() != null
             && screen.getMaterialList() instanceof MaterialReadiness readiness && readiness.mcmateriallist$ready()
             && !TaskScheduler.getInstanceClient().hasTask(TaskCountBlocksPlacement.class);
     }
-    public boolean writable() { return !pending && ready() && status == StoreStatus.OK && confirmed != null; }
+    public boolean writable() { return shared.selected() ? shared.writable() : !pending && !shared.loading() && ready() && status == StoreStatus.OK && confirmed != null; }
     public String feedback() {
+        if (shared.selected()) return shared.feedback();
         if (pending) return text("saving");
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return text("storage", status.name());
         return !ready() ? text("waiting") : status == StoreStatus.OK ? text("local") : text("untracked");
@@ -82,7 +90,7 @@ public final class MaterialWorkSession {
         var buttons = ((dev.mcmateriallist.fabric.client.mixin.GuiButtonsAccess) screen).mcmateriallist$buttons();
         int refreshX = compact ? buttons.stream().filter(button -> button.getY() == screen.getScreenHeight() - 22)
             .mapToInt(button -> button.getX() + button.getWidth()).max().orElse(12) + 2 : 12;
-        refreshButton = addToolbar(refreshX, compact ? screen.getScreenHeight() - 22 : 44, text(status == StoreStatus.MISSING ? "track" : "refresh"), (button, mouse) -> refresh());
+        refreshButton = addToolbar(refreshX, compact ? screen.getScreenHeight() - 22 : 44, text(!shared.selected() && status == StoreStatus.MISSING ? "track" : "refresh"), (button, mouse) -> refresh());
         int x = compact ? buttons.stream().filter(button -> button.getY() == 24)
             .mapToInt(button -> button.getX() + button.getWidth()).max().orElse(12) + 2 : refreshX + refreshButton.getWidth() + 4;
         int filterY = compact ? 24 : 44;
@@ -96,7 +104,7 @@ public final class MaterialWorkSession {
         x += hide.getWidth() + 4;
         if (compact) x = refreshX + refreshButton.getWidth() + 2;
         recoverButton = null;
-        if (status == StoreStatus.RECOVERY_REQUIRED) {
+        if (!shared.selected() && status == StoreStatus.RECOVERY_REQUIRED) {
             recoverButton = addToolbar(x, compact ? screen.getScreenHeight() - 58 : 44, text(recoveryConfirmed ? "confirm_recovery" : "recover"), (button, mouse) -> {
                 if (!recoveryConfirmed) { recoveryConfirmed = true; screen.addMessage(MessageType.WARNING, text("recovery_warning")); screen.initGui(); }
                 else if (!pending && ready()) {
@@ -104,10 +112,22 @@ public final class MaterialWorkSession {
                     await(MCMaterialListClient.work().recover(placement, DatasetKind.MATERIALS), this::publish);
                 }
             });
-        } else if (confirmed != null && !confirmed.archived().isEmpty()) {
+        } else if (!shared.selected() && confirmed != null && !confirmed.archived().isEmpty()) {
             addToolbar(x, compact ? screen.getScreenHeight() - 58 : 44, text("archived", confirmed.archived().size()), (button, mouse) -> GuiBase.openGui(new MaterialArchiveScreen(screen, this)));
         }
         renderControls();
+        int shareX = compact ? buttons.stream().filter(button -> button.getY() == screen.getScreenHeight() - 22)
+            .mapToInt(button -> button.getX() + button.getWidth()).max().orElse(12) + 2 : 126;
+        var share = addToolbar(shareX, screen.getScreenHeight() - (compact ? 22 : 58), dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("entry"),
+            (button, mouse) -> GuiBase.openGui(new dev.mcmateriallist.fabric.client.shared.SharedWorkScreen(screen, shared)));
+        // The localized upstream menu extends into the footer at some scales.
+        if (compact && buttons.stream().anyMatch(other -> other != share
+            && share.getX() < other.getX() + other.getWidth() && share.getX() + share.getWidth() > other.getX()
+            && share.getY() < other.getY() + other.getHeight() && share.getY() + share.getHeight() > other.getY())) {
+            share.setX(hide.getX() + hide.getWidth() + 4);
+            share.setY(filterY);
+        }
+        share.setHoverStrings(dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("title"));
     }
     private ButtonGeneric addToolbar(int x, int y, String label, IButtonActionListener action) {
         int width = Math.min(screen.getStringWidth(label) + 10, Math.max(28, (screen.getScreenWidth() - 24) / 4 - 4));
@@ -115,19 +135,28 @@ public final class MaterialWorkSession {
         button.setHoverStrings(label); return screen.addButton(button, action);
     }
     public void renderControls() {
-        if (refreshButton != null) refreshButton.setEnabled(!pending && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT));
+        if (refreshButton != null) refreshButton.setEnabled(shared.selected() ? !shared.pending() && ready() : !pending && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT));
         if (recoverButton != null) recoverButton.setEnabled(!pending && ready());
     }
     public void footer(GuiContext ctx) {
+        if (!sharedRebuild && sharedVersion != shared.version()) {
+            sharedVersion = shared.version(); sharedRebuild = true;
+            Minecraft.getInstance().schedule(() -> {
+                sharedRebuild = false;
+                if (Minecraft.getInstance().gui.screen() == screen) screen.initGui();
+            });
+        }
         renderControls();
-        String progress = confirmed == null ? text("untracked") : text("progress", confirmed.progress().completed(), confirmed.progress().total(), confirmed.progress().percentage());
-        if (confirmed != null) progress = dev.mcmateriallist.core.ui.WorkProgressPresentation.style(progress, confirmed.progress());
+        var valueProgress = progress();
+        String progress = valueProgress == null ? text("untracked") : text("progress", valueProgress.completed(), valueProgress.total(), valueProgress.percentage());
+        if (valueProgress != null) progress = dev.mcmateriallist.core.ui.WorkProgressPresentation.style(progress, valueProgress);
         int y = screen.getScreenHeight() - (compact() ? 46 : 72);
         String value = MaterialPresentation.clamp(progress + "  " + feedback(), Math.max(0, screen.getScreenWidth() - 24));
         RenderUtils.drawRect(ctx, 10, y - 2, screen.getStringWidth(value) + 4, 12, 0xFF1D2027);
         screen.drawString(ctx, value, 12, y, 0xFFFFFFFF);
     }
     public void refresh() {
+        if (shared.selected()) { shared.refresh(); return; }
         if (pending || placement == null || MCMaterialListClient.work() == null) return;
         var capture = PlacementWorkAdapter.capture(PlacementWorkAdapter.owner(screen.getMaterialList()), screen.getMaterialList());
         if (capture.status() != PlacementWorkAdapter.Status.OK || !placement.equals(capture.snapshot().placementId())) {
@@ -142,8 +171,9 @@ public final class MaterialWorkSession {
             publish(result.storage());
         });
     }
-    public void upstreamCompleted() { if (confirmed != null && !pending) refresh(); }
+    public void upstreamCompleted() { if (!shared.selected() && confirmed != null && !pending) refresh(); }
     public void command(MaterialTaskId id, TaskCommand command) {
+        if (shared.selected()) { shared.command(id, command); return; }
         var mc = Minecraft.getInstance();
         if (!writable() || mc.player == null || state(id) == null) return;
         var capture = PlacementWorkAdapter.capture(PlacementWorkAdapter.owner(screen.getMaterialList()), screen.getMaterialList());

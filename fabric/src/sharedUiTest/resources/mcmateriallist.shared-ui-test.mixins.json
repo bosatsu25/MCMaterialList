@@ -1,0 +1,8 @@
+{
+  "required": true,
+  "package": "dev.mcmateriallist.fabric.test.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": ["SharedUiResultDelay"],
+  "client": ["SharedUiAccess$Button", "SharedUiAccess$ListScreen", "SharedUiAccess$Rows", "SharedUiAccess$Children", "SharedUiAccess$Input", "SharedUiAccess$MaterialDetail", "SharedUiAccess$Screen", "SharedUiAccess$Messages", "SharedUiAccess$InGameMessages", "SharedUiAdmissionDelay"],
+  "injectors": {"defaultRequire": 1}
+}

@@ -1,4 +1,4 @@
-name: Phase 0/1 regression and Phase 2A/2B local UI
+name: Phase 0/1/2 regression and Phase 3A shared work
 on:
   push:
   pull_request:
@@ -17,14 +17,20 @@ jobs:
           java-version: '25'
       - run: chmod +x gradlew
       - run: ./gradlew --no-daemon clean build
-      - name: Real client restart and isolated dedicated server
-        run: xvfb-run -a ./gradlew --no-daemon verifyPhase2 -PacceptMinecraftEula=true
+      - name: Real client restart, shared transport and UI, and isolated dedicated server
+        run: xvfb-run -a ./gradlew --no-daemon verifyPhase3 -PacceptMinecraftEula=true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: phase-2b-test-evidence
+          name: phase-3a-test-evidence
           path: |
             core/build/test-results/test/*.xml
             fabric/build/run/clientGameTest/screenshots/*.png
             fabric/build/phase0-fixture/phase2-region/expected-regions.json
+            fabric/build/run/sharedUiTest/screenshots/*.png
+            fabric/build/run/sharedUiTest/logs/latest.log
+            fabric/build/run/sharedTransportTest/logs/latest.log
+            fabric/build/run/clientGameTest/logs/latest.log
+            fabric/build/run/serverSmoke/logs/latest.log
+            fabric/build/run/serverSmoke/class-load.log
           if-no-files-found: ignore

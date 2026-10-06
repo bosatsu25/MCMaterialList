@@ -10,5 +10,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(value = MaterialListPlacement.class, remap = false)
 public abstract class PlacementMaterialRefreshMixin {
     @Inject(method = "reCreateMaterialList", at = @At("HEAD"), require = 0)
-    private void countingStarted(CallbackInfo callback) { ((MaterialReadiness) this).mcmateriallist$invalidate(); }
+    private void countingStarted(CallbackInfo callback) {
+        ((MaterialReadiness) this).mcmateriallist$invalidate();
+        var list = (MaterialListPlacement) (Object) this;
+        ((dev.mcmateriallist.fabric.client.shared.SharedCountingProvenance) this).mcmateriallist$beginSharedCount(
+            dev.mcmateriallist.fabric.client.shared.NativeSharedCapture.starting(
+                ((MaterialListPlacementAccess) this).mcmateriallist$placement(), list));
+    }
 }

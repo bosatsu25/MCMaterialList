@@ -1,6 +1,6 @@
 # MCMaterialList
 
-Local material gathering and region building work state integrated with Litematica. Phase 2A/2B/2C provide durable local assignment, completion, notes, progress and information controls on both upstream screens. Issue #4 adds fixed GUI3 comparison layouts and real interaction regression; original fonts/textures/players remain unknown, and multiplayer synchronization remains Phase 3.
+Material gathering and region building work state integrated with Litematica. Phase 3A adds explicit server projects and shared work on the existing material and region screens while preserving durable local work. This is an intermediate integration build: complete member management, uncertain-operation recovery and external two-client acceptance remain pending.
 
 Pinned baseline: Minecraft **26.2**, Fabric Loader **0.19.3**, Fabric API **0.154.0+26.2**, Litematica **0.28.3**, MaLiLib **0.29.2**, JDK **25**, Gradle **9.7.1**, Loom **1.17.20**.
 
@@ -14,6 +14,16 @@ Open placement configuration and select **Track regions** to explicitly create r
 
 **Refresh work** reconciles original region definitions. Ambiguous changes start blocked default work and keep old work in **Archived work**. Review the exact new definition in row details and deliberately **Accept new definition**; archived state is never transferred. Backup recovery is a separate two-step action. Region controls never initialize or rewrite material snapshots.
 
+## Shared work
+
+On a supported server, open either native screen and select **Share**. **New project...** creates an initially empty work state from a saved, fully counted placement; existing local assignments, completion and notes are preserved separately. **Find projects** and **Join** explicitly select an accessible project for the invoking list. Material and region bindings are independent and may use different projects. **Use local work** returns that list to its original local data.
+
+Shared faces/details support Claim, Release, explicit assignment by supplied participant UUID, completion and note saving. Server confirmation is required before work changes appear. The creator can use **Viewer access...** to grant/remove read-only access by supplied UUID; no external player lookup occurs. Only one project is actively synchronized per connection, so switching between independently bound projects requires **Join / synchronize** or **Refresh work** before editing.
+
+Total/Missing/Available, multiplier, Ignore, Hide Done and personal enabled-region counts remain local observations. They never change shared task definitions or progress denominators. Creating a project requires a fresh full count with every original region enabled and untransformed; normal refresh of an existing binding may display partial personal counts. A changed schematic source, dimension, placement origin/rotation/mirror or original region definition blocks shared editing.
+
+Unsupported servers leave local work usable. Unknown sent commands block dependent shared edits and remain attached to their original account/project, even after switching to local mode. **Recover metadata**, then **Confirm recovery**, preserves damaged bytes but cannot establish the outcome of a command missing from a backup; shared writes stay blocked, and local work remains available. See [Phase 3A usage, persistence and verification](docs/phase-3-shared-work.md) for these limits.
+
 ## Build and verification
 
 Use JDK 25 as `JAVA_HOME`:
@@ -23,25 +33,27 @@ Use JDK 25 as `JAVA_HOME`:
 .\gradlew.bat :fabric:verifyClientRestart
 # Only after accepting https://aka.ms/MinecraftEULA:
 .\gradlew.bat :fabric:verifyServerSmoke -PacceptMinecraftEula=true
-# Full Phase 0/1 regression and Phase 2A/2B/2C UI verification:
-.\gradlew.bat clean verifyPhase2 -PacceptMinecraftEula=true
+# Full retained local/restart/server gates plus shared transport and native UI:
+.\gradlew.bat clean verifyPhase3 -PacceptMinecraftEula=true
 ```
 
-`verifyPhase0` and `verifyPhase1` remain available and run the strengthened client suite. Linux/macOS use `./gradlew`; Linux client tests need a display, for example `xvfb-run -a ./gradlew verifyPhase2 -PacceptMinecraftEula=true`.
+`verifyPhase0`, `verifyPhase1` and `verifyPhase2` remain available. Linux/macOS use `./gradlew`; Linux client tests need a display, for example `xvfb-run -a ./gradlew verifyPhase3 -PacceptMinecraftEula=true`.
 
-The distribution is `fabric/build/libs/fabric-0.1.0-phase.2c.jar` and includes the core library. Fabric API is required on both sides; pinned Litematica/MaLiLib are client-only. Unsupported or missing client mods disable the adapter. The dedicated server needs neither optional client mod. `:fabric:runClient` launches the normal development client. Minecraft 26.2 is unobfuscated: Loom uses `jar`, without external mappings or `remapJar`.
+The distribution is `fabric/build/libs/fabric-0.1.0-phase.3a.jar` and includes the core library. Fabric API is required on both sides; pinned Litematica/MaLiLib are client-only. Unsupported or missing client mods disable the adapter. The dedicated server needs neither optional client mod. `:fabric:runClient` launches the normal development client. Minecraft 26.2 is unobfuscated: Loom uses `jar`, without external mappings or `remapJar`.
 
 ## Structure and persistence
 
 - `core`: immutable domain, explicit work commands, progress, reconciliation, strict JSON codec, atomic local store and serial I/O service. No Minecraft/Fabric/Litematica dependency.
-- `fabric/src/main`: common entrypoint, without client references.
-- `fabric/src/client`: version gate, optional mixins, upstream adapters and diagnostic.
-- `fabric/src/gametest` and `fabric/src/serverSmoke`: verification code excluded from distribution.
+- `fabric/src/main`: common/server authority and bounded transport, without client references.
+- `fabric/src/client`: optional native adapters, local work and explicitly selected shared backend.
+- `fabric/src/gametest`, `serverSmoke`, `transportTest` and `sharedUiTest`: verification code excluded from distribution.
 
 Placement identity wraps upstream's persistent `getHashId()` UUID (`hash_code` in placement JSON). Phase 1 requires a registered saved placement and rejects duplicate identities. Materials use upstream aggregated item registry IDs; regions use durable task UUIDs mapped conservatively by schematic key, relative origin and signed dimensions. Materials and regions have separate dataset UUIDs and snapshot files.
 
 Data lives under `config/mcmateriallist/placements/<placement-uuid>/materials.json` and `regions.json`, with previous-good backups. No work state is written into `.litematic`. Corrupt/future snapshots block writes; backup recovery is explicit, never a silent blank reset. Work UUIDs and notes are stored only as required local data and are not logged by the application.
 
 Test worlds, synthetic fixtures, screenshots and traces remain under ignored build directories. Do not distribute these as user data.
+
+Independent shared bindings, confirmed caches and the original command journal use one schema-1 envelope under `config/mcmateriallist/shared-client/placement-<placement-uuid>.json`. Its previous-good backup omits derived shared snapshots and retains binding/journal metadata; it is not a backup of the server project. Shared authority remains in the server-owned world store. See the [server protocol](docs/SHARED_PROTOCOL.md) and [transport contract](docs/SHARED_TRANSPORT.md).
 
 See the [authoritative v0.1 design](litematica-collaboration-design-v0.1.md), [Phase 2A/2B/2C UI and verification](docs/phase-2-litematica-ui.md), [Phase 1 storage contract](docs/phase-1-local-work-state.md), and [Phase 0 evidence](docs/phase-0-compatibility-spike.md).
