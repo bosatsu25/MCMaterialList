@@ -164,6 +164,8 @@ loom.runs {
         inherit clientGameTest
         source sourceSets.transportTest
         vmArg '-Dfabric.client.gametest.modid=mcmateriallist-shared-transport-test'
+        if (providers.gradleProperty('transportRespawnFirst').map { it == 'true' }.getOrElse(false))
+            vmArg '-Dmcmateriallist.transportTest.respawnFirst=true'
         runDir 'build/run/sharedTransportTest'
     }
 }

@@ -44,7 +44,7 @@ public final class SharedServerNetworking {
                 runtime.registration(listener);
         });
         ServerPlayConnectionEvents.DISCONNECT.register((listener, server) -> {
-            Runtime runtime = RUNTIMES.get(server); if (runtime != null) runtime.disconnected(listener.player);
+            Runtime runtime = RUNTIMES.get(server); if (runtime != null) runtime.disconnected(listener);
         });
         ServerPlayNetworking.registerGlobalReceiver(SharedPayload.TYPE, (payload, context) -> {
             Runtime runtime = RUNTIMES.get(context.server());
@@ -191,7 +191,6 @@ public final class SharedServerNetworking {
     }
     private static final class Session {
         final UUID token = UUID.randomUUID(), actor;
-        final ServerPlayer player;
         final ServerGamePacketListenerImpl listener;
         final TickAllowance incoming = new TickAllowance(4);
         final Deque<UUID> discovery = new ArrayDeque<>();
@@ -199,7 +198,7 @@ public final class SharedServerNetworking {
         long sequence;
         boolean capable, waiting;
         SharedControlPayload.Reason control;
-        Session(ServerPlayer player) { this.player = player; listener = player.connection; actor = player.getUUID(); }
+        Session(ServerPlayer player) { listener = player.connection; actor = player.getUUID(); }
     }
     private static final class Runtime {
         final Processor processor;
@@ -211,15 +210,17 @@ public final class SharedServerNetworking {
         int ticks;
         Runtime(SharedProjectService service) { processor = new Processor(service); }
         boolean compatible(Session session) {
-            return processor.open && sessions.get(session.actor) == session && session.player.connection == session.listener && session.listener.isAcceptingMessages()
-                && ServerPlayNetworking.canSend(session.player, SharedPayload.TYPE)
-                && ServerPlayNetworking.canSend(session.player, SharedControlPayload.TYPE);
+            ServerPlayer player = session.listener.player;
+            return processor.open && sessions.get(session.actor) == session && player != null && player.getUUID().equals(session.actor)
+                && player.connection == session.listener && session.listener.isAcceptingMessages()
+                && ServerPlayNetworking.canSend(player, SharedPayload.TYPE)
+                && ServerPlayNetworking.canSend(player, SharedControlPayload.TYPE);
         }
         void connected(ServerPlayer player) {
             if (!ServerPlayNetworking.canSend(player, SharedPayload.TYPE) || !ServerPlayNetworking.canSend(player, SharedControlPayload.TYPE)) return;
             if (player.connection.getPacketContext().get(ATTEMPTED) == player.connection) return;
             player.connection.getPacketContext().set(ATTEMPTED, player.connection);
-            Session previous = sessions.get(player.getUUID()); if (previous != null) disconnected(previous.player);
+            Session previous = sessions.get(player.getUUID()); if (previous != null) disconnected(previous.listener);
             if (!connections.reserve(1)) {
                 if (capacityDiagnostics.size() < CONNECTIONS) capacityDiagnostics.addLast(player);
                 return;
@@ -229,16 +230,16 @@ public final class SharedServerNetworking {
         void registration(ServerGamePacketListenerImpl listener) {
             if (registrations.size() < CONNECTIONS && !registrations.contains(listener)) registrations.addLast(listener);
         }
-        void disconnected(ServerPlayer player) {
-            Session session = sessions.get(player.getUUID());
-            if (session == null || session.player != player) return;
+        void disconnected(ServerGamePacketListenerImpl listener) {
+            Session session = sessions.values().stream().filter(value -> value.listener == listener).findFirst().orElse(null);
+            if (session == null) return;
             sessions.remove(session.actor); connections.release(1); processor.live.remove(session.token);
             processor.capable.remove(session.token); processor.subscriptions.remove(session.token); processor.outgoing.remove(session.token);
         }
         void received(ServerPlayer player, SharedTransfers.Fragment fragment) {
             Session session = sessions.get(player.getUUID());
             if (session == null) { connected(player); session = sessions.get(player.getUUID()); }
-            if (session == null || session.player != player || !compatible(session)) return;
+            if (session == null || session.listener != player.connection || session.listener.player != player || !compatible(session)) return;
             if (!incoming.take() || !session.incoming.take()) { fail(session, SharedControlPayload.Reason.CAPACITY); return; }
             processor.frame(session.token, session.actor, fragment);
         }
@@ -265,6 +266,13 @@ public final class SharedServerNetworking {
                 () -> processor.encode(session.token, scope, message));
         }
         void completion(Completion value) {
+            if (!processor.open) return;
+            if (value instanceof Outcome item) events(item.outcome().events());
+            requesterCompletion(value);
+            // Queue an eligible admin snapshot before invalidation, without making events depend on that eligibility.
+            if (value instanceof SnapshotReply item) events(item.reply().events());
+        }
+        void requesterCompletion(Completion value) {
             UUID token = switch (value) {
                 case Hello item -> item.token(); case Started item -> item.token(); case SnapshotReply item -> item.token();
                 case Discovery item -> item.token(); case Outcome item -> item.token(); case Failure item -> item.token();
@@ -283,7 +291,6 @@ public final class SharedServerNetworking {
                     ProjectScope scope = snapshot == null ? null : snapshot.scope();
                     if (item.selects() && snapshot != null) { session.scope = scope; processor.subscriptions.put(token, scope); }
                     enqueue(session, scope, new SharedMessage.Snapshot(item.request(), item.reply().status(), snapshot));
-                    events(item.reply().events());
                 }
                 case Discovery item -> {
                     if (item.status() != SharedEvents.Status.OK) processor.encode(token, null,
@@ -292,7 +299,6 @@ public final class SharedServerNetworking {
                     else fail(session, SharedControlPayload.Reason.CAPACITY);
                 }
                 case Outcome item -> {
-                    events(item.outcome().events());
                     enqueue(session, item.outcome().result().scope(), new SharedMessage.CommandResult(item.outcome().result()));
                 }
                 case Failure item -> fail(session, item.reason());
@@ -321,7 +327,7 @@ public final class SharedServerNetworking {
             TransportBudget.Reservation release = flight.reserveOnce(bytes);
             if (release == null) { fail(session, SharedControlPayload.Reason.CAPACITY); return; }
             try {
-                session.player.connection.send(ServerPlayNetworking.createClientboundPacket(payload), future -> release.run());
+                session.listener.send(ServerPlayNetworking.createClientboundPacket(payload), future -> release.run());
             } catch (RuntimeException failure) { release.run(); fail(session, SharedControlPayload.Reason.RESYNC_REQUIRED); }
         }
         void tick() {

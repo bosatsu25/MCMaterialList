@@ -66,7 +66,8 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
         properties.setProperty("server-ip", "localhost");
         properties.setProperty("server-port", Integer.toString(availableLoopbackPort()));
         TransportObservation.reset();
-        try (var server = context.worldBuilder().createServer(properties); var connection = connectBounded(context, server)) {
+        try (var server = context.worldBuilder().createServer(properties)) {
+          try (var connection = connectBounded(context, server)) {
             connection.getClientLevel().waitForChunksRender();
             try { context.waitFor(client -> SharedClientNetworking.state().capabilities() != null); }
             catch (AssertionError failure) {
@@ -79,6 +80,15 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
             context.runOnClient(client -> check(SharedClientNetworking.state().capabilities().protocolVersion() == 1,
                 "Actual registered socket handshake did not negotiate v1"));
             verifySocket(context, server);
+            if (!Boolean.getBoolean("mcmateriallist.transportTest.respawnFirst")) verifyAbsentInitiatorEvents(context, server);
+            verifyOrdinaryRespawn(context, server);
+            if (Boolean.getBoolean("mcmateriallist.transportTest.respawnFirst")) verifyAbsentInitiatorEvents(context, server);
+            verifyAdminSnapshotInterleaving(context);
+          }
+          for (int i = 0; i < 100 && server.computeOnServer(TransportLifecycleProbe::slots) != 0; i++) context.waitTicks(1);
+          check(server.computeOnServer(TransportLifecycleProbe::slots) == 0,
+              "Respawned disconnect retained admission slot before server shutdown");
+          org.slf4j.LoggerFactory.getLogger("mcmateriallist-transport-test").info("Shared transport ordinary respawn/disconnect slot release PASS");
         }
         org.slf4j.LoggerFactory.getLogger("mcmateriallist-transport-test").info("Shared transport all assertions PASS");
     }
@@ -256,9 +266,107 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
         for (var fragment : SharedTransfers.split(UUID.randomUUID(), SharedProtocol.encode(message)))
             net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(new SharedPayload(fragment));
     }
+    private static void verifyAbsentInitiatorEvents(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server) {
+        UUID actor = context.computeOnClient(client -> client.player.getUUID());
+        UUID creator = UUID.randomUUID(); var service = server.computeOnServer(SharedServerNetworking::service);
+        var definition = definition();
+        var created = await(service.create(creator, SharedClientNetworking.state().capabilities().worldNamespace(),
+            "completion fixture", definition)).value();
+        await(service.setViewer(creator, created.scope(), 0, actor, true));
+        UUID join = context.computeOnClient(client -> SharedClientNetworking.join(created.scope()));
+        context.waitFor(client -> SharedClientNetworking.reply(join) != null && SharedClientNetworking.state().synchronizedState(), 600);
+        var row = definition.materials().keySet().iterator().next();
+        var command = new SharedCommand(created.scope(), row, UUID.randomUUID(), 0, 0, new SharedCommand.SetNote("committed without requester"));
+        UUID token = TransportLifecycleProbe.start(service, creator, created.scope(), new SharedMessage.TaskCommand(command));
+        context.waitFor(client -> TransportLifecycleProbe.held(), 600);
+        check(await(service.join(creator, created.scope())).value().projectRevision() == 2,
+            "Test held completion before durable command commit");
+        await(TransportLifecycleProbe.forgetInitiator(service, token)); TransportLifecycleProbe.release();
+        context.waitFor(client -> SharedClientNetworking.state().cursor() == 2, 600);
+        context.runOnClient(client -> check("committed without requester".equals(SharedClientNetworking.state().snapshot().rows().get(row).note()),
+            "Absent requester suppressed committed delta to actual Viewer"));
+        token = TransportLifecycleProbe.start(service, creator, created.scope(), new SharedMessage.UpdateManifest(UUID.randomUUID(),
+            created.scope(), 2, 0, new SharedManifest.Definition("c".repeat(64), definition.baseline(), definition.materials(), definition.regions())));
+        context.waitFor(client -> TransportLifecycleProbe.held(), 600);
+        check(await(service.join(creator, created.scope())).value().manifest().version() == 1,
+            "Test held completion before durable manifest commit");
+        await(TransportLifecycleProbe.forgetInitiator(service, token)); TransportLifecycleProbe.release();
+        context.waitFor(client -> SharedClientNetworking.state().status()
+            == dev.mcmateriallist.core.shared.transport.SharedClientState.Status.RESYNC_REQUIRED, 600);
+        UUID fresh = context.computeOnClient(client -> SharedClientNetworking.join(created.scope()));
+        context.waitFor(client -> SharedClientNetworking.reply(fresh) != null && SharedClientNetworking.state().synchronizedState(), 600);
+        token = TransportLifecycleProbe.start(service, creator, created.scope(),
+            new SharedMessage.SetViewer(UUID.randomUUID(), created.scope(), 3, actor, false));
+        context.waitFor(client -> TransportLifecycleProbe.held(), 600);
+        check(await(service.join(creator, created.scope())).value().projectRevision() == 4,
+            "Test held completion before durable removal commit");
+        await(TransportLifecycleProbe.forgetInitiator(service, token)); TransportLifecycleProbe.release();
+        context.waitFor(client -> SharedClientNetworking.state().status()
+            == dev.mcmateriallist.core.shared.transport.SharedClientState.Status.REVOKED, 600);
+        context.runOnClient(client -> check(SharedClientNetworking.state().snapshot() == null && SharedClientNetworking.reply(fresh) == null,
+            "Absent requester suppressed removal/private-cache clear"));
+        org.slf4j.LoggerFactory.getLogger("mcmateriallist-transport-test").info("Shared transport genuine committed events with synthetic absent initiator PASS");
+    }
+    private static void verifyOrdinaryRespawn(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server) {
+        UUID actor = context.computeOnClient(client -> client.player.getUUID());
+        var priorClientPlayer = context.computeOnClient(client -> client.player);
+        var priorServerPlayer = server.computeOnServer(mc -> {
+            var old = mc.getPlayerList().getPlayer(actor); old.setHealth(0); return old;
+        });
+        // The actual client request invokes vanilla's listener handler, which owns player reassignment.
+        context.runOnClient(client -> client.player.respawn());
+        for (int i = 0; i < 100 && server.computeOnServer(mc -> mc.getPlayerList().getPlayer(actor) == priorServerPlayer); i++)
+            context.waitTicks(1);
+        server.runOnServer(mc -> {
+            var next = mc.getPlayerList().getPlayer(actor);
+            check(next != null && next != priorServerPlayer, "Native respawn request did not replace player");
+            check(next.connection == priorServerPlayer.connection, "Native respawn replaced the connection");
+            check(next.connection.player == next, "Vanilla respawn handler did not adopt replacement player");
+            check(next.getUUID().equals(actor), "Native respawn changed authenticated actor");
+        });
+        context.waitFor(client -> client.player != priorClientPlayer && client.player != null, 600);
+        context.runOnClient(client -> SharedClientNetworking.discover());
+        context.waitFor(client -> SharedClientNetworking.state().projects().size() == 1, 600);
+        UUID request = context.computeOnClient(client -> SharedClientNetworking.join(SharedClientNetworking.state().projects().getFirst().scope()));
+        context.waitFor(client -> SharedClientNetworking.reply(request) != null && SharedClientNetworking.state().synchronizedState(), 600);
+        check(server.computeOnServer(TransportLifecycleProbe::slots) == 1, "Respawn replaced or leaked shared admission slot");
+    }
     private static <T> T await(CompletionStage<T> stage) {
         try { return stage.toCompletableFuture().get(20, TimeUnit.SECONDS); }
         catch (Exception failure) { throw new AssertionError("Test setup authority failed", failure); }
+    }
+    private static void verifyAdminSnapshotInterleaving(ClientGameTestContext context) {
+        Map<MaterialTaskId, Long> materials = new LinkedHashMap<>();
+        for (int i = 0; i < 900; i++) materials.put(new MaterialTaskId("minecraft:fixture_" + i + "a".repeat(190)), 1L);
+        var definition = new SharedManifest.Definition("d".repeat(64), definition().baseline(), materials, List.of());
+        UUID create = context.computeOnClient(client -> SharedClientNetworking.create("admin transfer fixture", definition));
+        context.waitFor(client -> SharedClientNetworking.reply(create) != null && SharedClientNetworking.state().synchronizedState(), 600);
+        var snapshot = context.computeOnClient(client -> SharedClientNetworking.reply(create).snapshot());
+        check(snapshot != null && SharedProtocol.encode(new SharedMessage.Snapshot(create, SharedEvents.Status.OK, snapshot)).length
+            > 4 * SharedLimits.FRAGMENT_BYTES, "Admin fixture snapshot did not exceed server tick frame budget");
+        UUID request = context.computeOnClient(client -> {
+            AdminSnapshotGate.begin(snapshot.scope());
+            return SharedClientNetworking.updateManifest(snapshot.scope(), 0, 0,
+                new SharedManifest.Definition("e".repeat(64), definition.baseline(), definition.materials(), definition.regions()));
+        });
+        context.waitFor(client -> AdminSnapshotGate.ready(), 600);
+        if (AdminSnapshotGate.notificationFirst()) {
+            check(await(AdminSnapshotGate.workerUsage()) > 0, "Admin fixture did not establish genuine incomplete snapshot");
+            context.runOnClient(client -> AdminSnapshotGate.releaseNotification());
+            check(await(AdminSnapshotGate.workerUsage()) == 0, "Actual invalidation did not clear incomplete snapshot");
+            context.runOnClient(client -> AdminSnapshotGate.releaseLastFrame());
+            org.slf4j.LoggerFactory.getLogger("mcmateriallist-transport-test").info("Shared admin test actual notification cleared staged incomplete snapshot");
+        }
+        context.waitFor(client -> SharedClientNetworking.reply(request) != null && AdminSnapshotGate.notified(), 200);
+        context.runOnClient(client -> {
+            check(SharedClientNetworking.reply(request).snapshot().manifest().version() == 1,
+                "Invalidation discarded correlated committed admin snapshot");
+            check(!SharedClientNetworking.state().synchronizedState(), "Admin snapshot silently enabled writes after invalidation");
+            AdminSnapshotGate.finish();
+        });
+        org.slf4j.LoggerFactory.getLogger("mcmateriallist-transport-test").info("Shared transport multi-tick admin snapshot/invalidation interleaving PASS");
     }
     private static void check(boolean condition, String reason) { if (!condition) throw new AssertionError(reason); }
 }

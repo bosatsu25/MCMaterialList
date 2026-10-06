@@ -41,7 +41,7 @@ public final class SharedClientNetworking {
         final BoundedTransfers receiver = new BoundedTransfers(incomingBudget);
         final BoundedOutgoing outgoing = new BoundedOutgoing(new TransportBudget(64L * 1024 * 1024), LIMIT);
         final ArrayBlockingQueue<Decoded> decoded = new ArrayBlockingQueue<>(LIMIT);
-        final ArrayBlockingQueue<Admission> admissions = new ArrayBlockingQueue<>(LIMIT);
+        final BoundedAdmissions<Admission> admissions = new BoundedAdmissions<>(LIMIT, admission -> admission.result().complete(false));
         final AtomicBoolean failed = new AtomicBoolean();
         final AtomicLong epoch = new AtomicLong();
         final ThreadPoolExecutor worker;
@@ -96,14 +96,12 @@ public final class SharedClientNetworking {
             if (!work(receiver::clear)) failed.set(true);
         }
         void close() {
-            open = false; outgoing.clear(); decoded.clear(); worker.shutdown();
+            open = false; admissions.close(); outgoing.clear(); decoded.clear(); worker.shutdown();
             Thread drain = new Thread(() -> {
                 try { while (!worker.awaitTermination(1, TimeUnit.SECONDS)) { /* accepted bounded decode work */ } receiver.clear(); outgoing.clear(); }
                 catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
             }, "mcmateriallist-shared-client-drain");
             drain.setDaemon(false); drain.start();
-            Admission admission;
-            while ((admission = admissions.poll()) != null) admission.result().complete(false);
         }
     }
     private SharedClientNetworking() {}
@@ -225,8 +223,7 @@ public final class SharedClientNetworking {
         catch (RuntimeException failure) { unresolved.remove(command.operationId()); return CompletableFuture.completedFuture(false); }
         durable.whenComplete((admitted, failure) -> {
             boolean accepted = failure == null && Boolean.TRUE.equals(admitted);
-            if (!current.open) { sent.complete(false); return; }
-            if (!current.admissions.offer(new Admission(command, accepted, sent))) { current.failed.set(true); sent.complete(false); }
+            if (!current.admissions.offer(new Admission(command, accepted, sent)) && current.open) current.failed.set(true);
         });
         return sent.minimalCompletionStage();
     }
