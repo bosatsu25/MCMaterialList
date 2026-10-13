@@ -1,6 +1,6 @@
 # MCMaterialList
 
-Material gathering and region building work state integrated with Litematica. Phase 3A adds explicit server projects and shared work on the existing material and region screens while preserving durable local work. This is an intermediate integration build: complete member management, uncertain-operation recovery and external two-client acceptance remain pending.
+Material gathering and region building work state integrated with Litematica. Phase 3 integration adds explicit server projects, Viewer/Member/Administrator role management, and shared work on the existing material and region screens while preserving durable local work. Reconnect/lost-outcome recovery and external two-client acceptance remain pending.
 
 Pinned baseline: Minecraft **26.2**, Fabric Loader **0.19.3**, Fabric API **0.154.0+26.2**, Litematica **0.28.3**, MaLiLib **0.29.2**, JDK **25**, Gradle **9.7.1**, Loom **1.17.20**.
 

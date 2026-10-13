@@ -107,8 +107,14 @@ public final class SharedMembershipScreen extends GuiBase {
         var snapshot = backend.snapshot();
         if (snapshot == null) return List.of();
         Set<UUID> ids = new HashSet<>(snapshot.members().keySet());
-        if (mc.level != null) mc.level.players().forEach(player -> ids.add(player.getUUID()));
+        ids.addAll(onlinePlayers().keySet());
         return ids.stream().sorted(Comparator.comparing(UUID::toString)).toList();
+    }
+    private Map<UUID, String> onlinePlayers() {
+        Map<UUID, String> online = new HashMap<>();
+        if (mc.getConnection() != null) mc.getConnection().getOnlinePlayers().forEach(info ->
+            online.put(info.getProfile().id(), info.getProfile().name()));
+        return online;
     }
     private boolean authorized() {
         return Objects.equals(original, backend.context()) && backend.administer();
@@ -148,8 +154,7 @@ public final class SharedMembershipScreen extends GuiBase {
             var ids = participants();
             int pages = Math.max(1, (ids.size() + rows - 1) / rows);
             if (page >= pages) page = pages - 1;
-            Map<UUID, String> online = new HashMap<>();
-            if (mc.level != null) mc.level.players().forEach(player -> online.put(player.getUUID(), player.getName().getString()));
+            Map<UUID, String> online = onlinePlayers();
             for (int i = 0; i < rows; i++) {
                 int index = page * rows + i;
                 if (index >= ids.size()) continue;

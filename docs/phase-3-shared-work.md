@@ -1,6 +1,6 @@
-# Phase 3A: explicit shared work integration
+# Phase 3 shared work integration
 
-This intermediate build connects the accepted [shared authority](SHARED_PROTOCOL.md) and [Fabric transport](SHARED_TRANSPORT.md) to the existing native material and region screens. It does not claim complete multiplayer acceptance or release readiness. Core membership policy and durable migration are implemented for Issue #6. Native role-management integration, reconnect/lost-outcome resolution, fault acceptance and external two-client validation remain separate work (Issues #6–#8).
+This integration build connects the accepted [shared authority](SHARED_PROTOCOL.md) and [Fabric transport](SHARED_TRANSPORT.md) to the existing native material and region screens, including Viewer/Member/Administrator management. It does not claim complete multiplayer acceptance or release readiness. Core membership policy, durable migration, and native role controls are implemented for Issue #6; reconnect/lost-outcome resolution, fault acceptance, and external two-client validation remain separate work (Issues #7–#8).
 
 ## Use local or shared work deliberately
 

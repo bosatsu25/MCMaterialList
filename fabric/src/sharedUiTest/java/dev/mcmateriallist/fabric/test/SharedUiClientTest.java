@@ -222,6 +222,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             geometry(context, screen, work, regionScreen, regions);
             context.setScreen(() -> screen); action(context, "Refresh work"); context.waitFor(client -> work.writable(), 600);
             if (SharedUiRaceChecks.enabled("admission")) SharedUiRaceChecks.falseAdmission(context, work, store, config, placementId);
+            definitionConfirmationContext(context, server, screen, work);
             definitionRepair(context, server, screen, placement, materials, work);
             viewerAndUnavailable(context, server, screen, work, placement, store, placementId);
             check(Arrays.equals(localBytes, Files.readAllBytes(localFile)), "Shared flow rewrote original local file bytes");
@@ -233,6 +234,80 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         check(SharedSourceLoading.awaitClosed(10, java.util.concurrent.TimeUnit.SECONDS), "Loaded source worker did not close");
         org.slf4j.LoggerFactory.getLogger("mcmateriallist-shared-ui-test").info("Shared native UI all assertions PASS");
       } catch (Exception failure) { throw new AssertionError("Shared native UI fixture failed", failure); }
+    }
+    private static void definitionConfirmationContext(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server,
+            GuiMaterialList screen, MaterialWorkSession work) throws Exception {
+        var actor = context.computeOnClient(client -> client.player.getUUID());
+        var service = server.computeOnServer(SharedServerNetworking::service);
+        var original = context.computeOnClient(client -> work.shared().snapshot());
+        var created = service.create(actor, original.scope().worldNamespace(), "Definition confirmation fixture",
+            original.manifest().definition()).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        check(created.status() == SharedEvents.Status.OK, "Definition confirmation fixture creation failed");
+        var second = created.value();
+        action(context, "Share"); action(context, "Update shared definition...");
+        context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Confirm global update"),
+            "Definition confirmation did not arm on the original project"));
+        action(context, "Find projects");
+        context.waitFor(client -> SharedClientNetworking.state().projects().stream()
+            .anyMatch(project -> project.scope().equals(second.scope())), 600);
+        action(context, "Join: Definition confirmation fixture");
+        context.waitFor(client -> work.shared().snapshot() != null && work.shared().snapshot().scope().equals(second.scope())
+            && work.writable(), 600);
+        context.runOnClient(client -> ((SharedWorkScreen) client.gui.screen()).initGui());
+        context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Update shared definition...")
+            && !hasButton((GuiBase) client.gui.screen(), "Confirm global update"),
+            "Definition confirmation from the original project remained armed after joining another project"));
+        action(context, "Update shared definition...");
+        check(second.equals(service.join(actor, second.scope()).toCompletableFuture()
+            .get(10, java.util.concurrent.TimeUnit.SECONDS).value()),
+            "First definition click on the second project wrote a global definition");
+        var stone = new MaterialTaskId("minecraft:stone");
+        check(second.rows().containsKey(stone), "Same-scope confirmation fixture lacks stone row");
+        var changed = service.command(actor, new SharedCommand(second.scope(), stone, UUID.randomUUID(),
+            second.rows().get(stone).rowVersion(), second.manifest().version(),
+            new SharedCommand.SetNote("Confirmation cursor fixture")))
+            .toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        check(changed.result().status() == SharedEvents.Status.OK,
+            "Same-scope confirmation fixture command did not commit");
+        server.runOnServer(serverInstance -> SharedServerNetworking.publishEvents(serverInstance, changed.events()));
+        context.waitFor(client -> work.shared().snapshot() != null && work.shared().snapshot().scope().equals(second.scope())
+            && work.shared().snapshot().projectRevision() == changed.result().projectRevision() && work.writable(), 600);
+        context.runOnClient(client -> {
+            ((SharedWorkScreen) client.gui.screen()).initGui();
+            check(hasButton((GuiBase) client.gui.screen(), "Update shared definition...")
+                && !hasButton((GuiBase) client.gui.screen(), "Confirm global update"),
+                "Definition confirmation remained armed after same-project cursor change");
+        });
+        action(context, "Find projects");
+        context.waitFor(client -> SharedClientNetworking.state().projects().stream()
+            .anyMatch(project -> project.scope().equals(original.scope())), 600);
+        String originalJoin = SharedWorkBackend.text("join", original.name());
+        context.runOnClient(client -> ((SharedWorkScreen) client.gui.screen()).initGui());
+        int projectPages = context.computeOnClient(client -> {
+            int rows = Math.max(1, (((GuiBase) client.gui.screen()).getScreenHeight() - 200) / 24);
+            return Math.max(1, (SharedClientNetworking.state().projects().size() + rows - 1) / rows);
+        });
+        for (int index = 0; index < projectPages && !context.computeOnClient(client -> hasButton((GuiBase) client.gui.screen(), originalJoin)); index++) {
+            context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Next page"),
+                "Original project is in discovery but native pagination is unavailable"));
+            action(context, "Next page");
+        }
+        context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), originalJoin),
+            "Original project is in discovery but not rendered on a native page"));
+        action(context, originalJoin);
+        context.waitFor(client -> work.shared().snapshot() != null && work.shared().snapshot().scope().equals(original.scope())
+            && work.writable(), 600);
+        context.runOnClient(client -> {
+            ((SharedWorkScreen) client.gui.screen()).initGui();
+            check(hasButton((GuiBase) client.gui.screen(), "Update shared definition..."),
+                "Second-project definition confirmation remained armed after returning to original project");
+        });
+        check(original.equals(service.join(actor, original.scope()).toCompletableFuture()
+            .get(10, java.util.concurrent.TimeUnit.SECONDS).value()),
+            "Cross-project definition confirmation changed the original project");
+        back(context);
+        context.setScreen(() -> screen);
     }
     private static void definitionRepair(ClientGameTestContext context,
             net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server,

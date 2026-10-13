@@ -1,5 +1,6 @@
 package dev.mcmateriallist.fabric.client.shared;
 
+import dev.mcmateriallist.core.shared.ProjectSnapshot;
 import dev.mcmateriallist.fabric.client.material.MaterialPresentation;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.button.ButtonGeneric;
@@ -16,11 +17,14 @@ public final class SharedWorkScreen extends GuiBase {
     private int page;
     private ButtonGeneric local;
     private ButtonGeneric membership, definition;
-    private boolean rebuilding, confirmRecovery, confirmDefinition;
+    private boolean rebuilding, confirmRecovery;
+    private DefinitionConfirmation confirmDefinition;
+    private record DefinitionConfirmation(Object context, ProjectSnapshot snapshot, long cursor) {}
     public SharedWorkScreen(GuiBase parent, SharedWorkBackend backend) {
         setParent(parent); this.backend = backend; title = SharedWorkBackend.text("title");
     }
     @Override public void initGui() {
+        boolean confirmed = definitionConfirmed();
         super.initGui(); requests.clear(); local = membership = definition = null; version = backend.version(); projects = SharedClientNetworking.state().projects();
         int gap = 4, width = Math.min(150, (getScreenWidth() - 28) / 2);
         requests.add(add(12, 64, width, "discover", backend::discover));
@@ -31,9 +35,12 @@ public final class SharedWorkScreen extends GuiBase {
         }
         if (backend.selected() && backend.role() == dev.mcmateriallist.core.shared.ProjectRole.ADMINISTRATOR) {
             membership = add(12, 112, width, "membership", () -> GuiBase.openGui(new SharedMembershipScreen(this, backend)));
-            definition = add(16 + width, 112, width, confirmDefinition ? "confirm_definition" : "update_definition", () -> {
-                if (confirmDefinition) { backend.updateDefinition(); confirmDefinition = false; }
-                else confirmDefinition = true;
+            definition = add(16 + width, 112, width, confirmed ? "confirm_definition" : "update_definition", () -> {
+                var current = definitionContext();
+                if (current != null && current.equals(confirmDefinition)) {
+                    confirmDefinition = null;
+                    backend.updateDefinition();
+                } else confirmDefinition = current;
                 initGui();
             });
             definition.setHoverStrings(SharedWorkBackend.text("definition_explanation"));
@@ -58,6 +65,22 @@ public final class SharedWorkScreen extends GuiBase {
         String label = SharedWorkBackend.text(key);
         var button = addButton(new ButtonGeneric(x, y, width, 20, MaterialPresentation.clamp(label, width - 8)), (source, mouse) -> action.run());
         button.setHoverStrings(label); return button;
+    }
+    private DefinitionConfirmation definitionContext() {
+        var snapshot = backend.snapshot();
+        return snapshot == null || !backend.canUpdateDefinition() ? null
+            : new DefinitionConfirmation(backend.context(), snapshot, SharedClientNetworking.state().cursor());
+    }
+    private boolean definitionConfirmed() {
+        if (confirmDefinition != null && !confirmDefinition.equals(definitionContext())) confirmDefinition = null;
+        return confirmDefinition != null;
+    }
+    @Override protected void drawButtons(GuiContext ctx, int mouseX, int mouseY, float ticks) {
+        if (confirmDefinition != null && !confirmDefinition.equals(definitionContext())) {
+            confirmDefinition = null;
+            initGui();
+        }
+        super.drawButtons(ctx, mouseX, mouseY, ticks);
     }
     @Override protected void drawContents(GuiContext ctx, int mouseX, int mouseY, float ticks) {
         super.drawContents(ctx, mouseX, mouseY, ticks);
