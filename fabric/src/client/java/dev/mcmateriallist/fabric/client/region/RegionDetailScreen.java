@@ -63,14 +63,21 @@ public final class RegionDetailScreen extends GuiBase {
             && (!session.shared().selected() || session.shared().snapshot() != null);
         if (!sameContext) { draft = ""; note.setValueWrapper(""); }
         var state = sameContext ? session.state(id) : null;
-        if (assign != null) assign.setEnabled(state != null && session.shared().writable());
+        if (assign != null) {
+            boolean canAssign = state != null && session.shared().allowed(id, new TaskCommand.Assign(null));
+            assign.setEnabled(canAssign);
+            assign.setHoverStrings(canAssign ? session.feedback() : dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("task_permission_required"));
+        }
         var actor = mc.player == null ? null : mc.player.getUUID();
         if (accept != null) accept.setEnabled(session.writable() && session.review(id));
         for (int i = 0; i < actions.size(); i++) {
             boolean allowed = state != null && actor != null && (i == 0 ? state.assignee() == null || actor.equals(state.assignee())
                 : i == 1 ? actor.equals(state.assignee()) : true);
-            actions.get(i).setEnabled(sameContext && session.writable(id) && allowed);
-            actions.get(i).setHoverStrings(allowed ? session.feedback() : RegionWorkSession.text("ownership_required"));
+            TaskCommand intent = i == 0 ? new TaskCommand.Claim() : i == 1 ? new TaskCommand.Release() : new TaskCommand.SetNote("");
+            boolean permitted = session.shared().selected() ? session.allowed(id, intent) : session.writable(id) && allowed;
+            actions.get(i).setEnabled(sameContext && permitted);
+            actions.get(i).setHoverStrings(permitted ? session.feedback() : session.shared().selected()
+                ? dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("task_permission_required") : RegionWorkSession.text("ownership_required"));
         }
         drawString(ctx, dev.mcmateriallist.fabric.client.material.MaterialPresentation.clamp(RegionWorkSession.text("assignee", dev.mcmateriallist.fabric.client.material.MaterialWorkSession.playerName(state == null ? null : state.assignee())), getScreenWidth() - 24), 12, 30, 0xFFFFFFFF);
         drawString(ctx, dev.mcmateriallist.fabric.client.material.MaterialPresentation.clamp(state != null && state.done() ? RegionWorkSession.text("completed", dev.mcmateriallist.fabric.client.material.MaterialWorkSession.playerName(state.completedBy()), state.completedAt().toString()) : RegionWorkSession.text("incomplete"), getScreenWidth() - 24), 12, 46, 0xFFFFFFFF);

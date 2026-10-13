@@ -7,7 +7,6 @@ import dev.mcmateriallist.core.shared.client.SharedClientArchive;
 import dev.mcmateriallist.core.work.*;
 import fi.dy.masa.litematica.materials.MaterialListBase;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
@@ -59,6 +58,12 @@ public final class SharedWorkBackend {
     public void local() { controller.local(this); }
     public boolean canRecover() { return entry != null && entry.storage == StoreStatus.RECOVERY_REQUIRED && !pending(); }
     public void recover() { controller.recover(this); }
-    public boolean admin() { var snapshot = snapshot(); return writable() && snapshot != null && Objects.equals(snapshot.creator(), SharedWorkController.actor()); }
+    public ProjectRole role() { var snapshot = snapshot(); return snapshot == null ? null : snapshot.role(SharedWorkController.actor()); }
+    public boolean allowed(TaskId task, TaskCommand intent) { return controller.allowed(this, task, intent); }
+    public boolean administer() { return controller.administer(this, false); }
+    public boolean canUpdateDefinition() { return controller.administer(this, true); }
+    public boolean admin() { return administer(); }
+    public void membership(UUID target, ProjectRole role) { controller.membership(this, target, role); }
+    public void updateDefinition() { controller.updateDefinition(this); }
     public void viewer(UUID target, boolean granted) { controller.viewer(this, target, granted); }
 }

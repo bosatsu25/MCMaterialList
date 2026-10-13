@@ -74,7 +74,13 @@ public final class RegionWorkSession {
         return capture.status() == PlacementWorkAdapter.Status.OK && placement.equals(capture.snapshot().placementId());
     }
     public boolean writable() { return shared.selected() ? shared.writable() : !pending && !shared.loading() && ready() && status == StoreStatus.OK && confirmed != null; }
-    public boolean writable(RegionTaskId id) { return writable() && state(id) != null && (shared.selected() || !review(id)); }
+    public boolean writable(RegionTaskId id) {
+        var row = state(id);
+        return row != null && (shared.selected() ? shared.allowed(id, new TaskCommand.SetDone(!row.done())) : writable() && !review(id));
+    }
+    public boolean allowed(RegionTaskId id, TaskCommand intent) {
+        return shared.selected() ? shared.allowed(id, intent) : writable() && state(id) != null && !review(id);
+    }
     public String feedback() {
         if (shared.loading() || shared.selected()) return shared.feedback();
         if (pending) return text("saving");

@@ -1,6 +1,7 @@
 package dev.mcmateriallist.fabric.test.mixin;
 import dev.mcmateriallist.core.shared.ProjectScope;
 import dev.mcmateriallist.core.shared.protocol.SharedMessage;
+import dev.mcmateriallist.core.shared.transport.BoundedOutgoing;
 import java.util.*;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.*;
@@ -12,4 +13,5 @@ public interface SharedProcessorControl {
     @Accessor("live") Set<UUID> liveTokens();
     @Accessor("capable") Set<UUID> capableTokens();
     @Accessor("subscriptions") Map<UUID, ProjectScope> subscriptions();
+    @Accessor("outgoing") BoundedOutgoing outgoing();
 }

@@ -36,9 +36,16 @@ public final class SharedUiAccess {
     @Mixin(value = WidgetContainer.class, remap = false)
     public interface Children { @Accessor("subWidgets") List<WidgetBase> children(); }
     @Mixin(value = dev.mcmateriallist.fabric.client.shared.SharedInputScreen.class, remap = false)
-    public interface Input { @Accessor("input") GuiTextFieldMultiLine input(); }
+    public interface Input {
+        @Accessor("input") GuiTextFieldMultiLine input();
+        @Accessor("validation") String validation();
+    }
+    @Mixin(value = dev.mcmateriallist.fabric.client.shared.SharedMembershipScreen.class, remap = false)
+    public interface MembershipInput { @Accessor("input") GuiTextFieldMultiLine input(); }
     @Mixin(value = dev.mcmateriallist.fabric.client.material.MaterialDetailScreen.class, remap = false)
     public interface MaterialDetail { @Accessor("note") GuiTextFieldMultiLine note(); }
+    @Mixin(value = dev.mcmateriallist.fabric.client.region.RegionDetailScreen.class, remap = false)
+    public interface RegionDetail { @Accessor("note") GuiTextFieldMultiLine note(); }
     @Mixin(value = fi.dy.masa.malilib.gui.GuiBase.class, remap = false)
     public interface Screen {
         @Accessor("textFields") List<fi.dy.masa.malilib.gui.wrappers.TextFieldWrapper<? extends fi.dy.masa.malilib.gui.GuiTextFieldGeneric>> fields();

@@ -1,6 +1,8 @@
 package dev.mcmateriallist.fabric.test;
 import dev.mcmateriallist.core.shared.*;
 import dev.mcmateriallist.core.shared.protocol.SharedMessage;
+import dev.mcmateriallist.core.shared.transport.BoundedOutgoing;
+import dev.mcmateriallist.fabric.shared.SharedServerNetworking;
 import dev.mcmateriallist.fabric.test.mixin.*;
 import net.minecraft.server.MinecraftServer;
 import java.util.*;
@@ -37,6 +39,12 @@ public final class TransportLifecycleProbe {
         })) throw new AssertionError("Test wire queue capacity");
         return token;
     }
+    public static synchronized void holdNextActual(SharedProjectService service) {
+        SharedProcessorControl control = PROCESSORS.get(service);
+        if (pending != null || control == null || control.liveTokens().size() != 1)
+            throw new AssertionError("Test actual connection is not unique");
+        pending = control.liveTokens().iterator().next();
+    }
     public static CompletableFuture<Void> forgetInitiator(SharedProjectService service, UUID token) {
         SharedProcessorControl control;
         synchronized (TransportLifecycleProbe.class) { control = PROCESSORS.get(service); }
@@ -58,5 +66,11 @@ public final class TransportLifecycleProbe {
         Object runtime = SharedServerAccess.runtimes().get(server);
         if (!(runtime instanceof SharedRuntimeCounts counts)) throw new AssertionError("Test runtime count bridge missing");
         return counts.connectionBudget().used();
+    }
+    public static BoundedOutgoing outgoing(MinecraftServer server) {
+        SharedProcessorControl control;
+        synchronized (TransportLifecycleProbe.class) { control = PROCESSORS.get(SharedServerNetworking.service(server)); }
+        if (control == null) throw new AssertionError("Test processor outgoing bridge missing");
+        return control.outgoing();
     }
 }
