@@ -76,7 +76,7 @@ class SharedClientStoreTest {
         var store = new SharedClientStore(root); var before = archive();
         assertEquals(StoreStatus.OK, store.save(before, -1).status());
         assertEquals(StoreStatus.OK, store.save(next(before), 0).status());
-        String future = Files.readString(file()).replace("\"schema\":1", "\"schema\":99");
+        String future = Files.readString(file()).replace("\"schema\":2", "\"schema\":99");
         Files.writeString(file(), future);
         assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.load(placement).status());
         assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.save(next(next(before)), 1).status());
@@ -111,7 +111,7 @@ class SharedClientStoreTest {
         var store = new SharedClientStore(root); var before = archive();
         assertTrue(store.save(before, -1).ok()); assertTrue(store.save(next(before), 0).ok());
         String payload = com.google.gson.JsonParser.parseString(Files.readString(file())).getAsJsonObject().get("payload").getAsString();
-        String reordered = "{\"payload\":\"" + payload + "\",\"schema\":1}";
+        String reordered = "{\"payload\":\"" + payload + "\",\"schema\":2}";
         Files.writeString(file(), reordered);
         byte[] backup = Files.readAllBytes(file().resolveSibling(file().getFileName() + ".bak"));
         assertEquals(next(before), store.load(placement).value());
@@ -159,7 +159,7 @@ class SharedClientStoreTest {
         assertTrue(store.save(before, -1).ok()); assertTrue(store.save(next(before), 0).ok());
         Path backup = file().resolveSibling(file().getFileName() + ".bak");
         byte[] good = Files.readAllBytes(file());
-        for (String version : List.of("99.0", "1e2", "2.00e0", "1e99999999999999999999")) {
+        for (String version : List.of("3", "99.0", "1e2", "3.00e0", "1e99999999999999999999", "1e" + "9".repeat(10000), "9".repeat(10000))) {
             String future = "{\"schema\":" + version + ",\"payload\":{\"new\":true}}";
             for (boolean futurePrimary : new boolean[]{true, false}) {
                 Files.write(file(), futurePrimary ? future.getBytes(java.nio.charset.StandardCharsets.UTF_8) : "broken".getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -191,7 +191,7 @@ class SharedClientStoreTest {
             var retained = files.filter(path -> path.toString().endsWith(".retained")).toList();
             assertEquals(1, retained.size()); assertEquals("damaged original journal", Files.readString(retained.getFirst()));
         }
-        String future = Files.readString(file()).replace("\"schema\":1", "\"schema\":99"); Files.writeString(file(), future);
+        String future = Files.readString(file()).replace("\"schema\":2", "\"schema\":99"); Files.writeString(file(), future);
         assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.recover(placement).status()); assertEquals(future, Files.readString(file()));
     }
 }

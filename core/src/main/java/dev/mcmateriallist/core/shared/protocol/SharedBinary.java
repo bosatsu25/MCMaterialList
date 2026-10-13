@@ -115,21 +115,32 @@ public final class SharedBinary {
         if (nanos < 0 || nanos > 999_999_999) throw new IllegalArgumentException("Invalid instant"); return Instant.ofEpochSecond(seconds, nanos);
     }
     static void snapshot(DataOutputStream out, ProjectSnapshot s) throws IOException {
-        scope(out, s.scope()); text(out, s.name(), 256); uuid(out, s.creator()); out.writeInt(s.viewers().size());
-        for (UUID viewer : s.viewers().stream().sorted().toList()) uuid(out, viewer);
+        scope(out, s.scope()); text(out, s.name(), 256); uuid(out, s.creator()); out.writeInt(s.members().size());
+        for (UUID member : s.members().keySet().stream().sorted().toList()) { uuid(out, member); out.writeByte(s.members().get(member).ordinal()); }
         out.writeLong(s.projectRevision()); manifest(out, s.manifest());
         List<TaskId> ids = ordered(s.rows().keySet()); out.writeInt(ids.size());
         for (TaskId id : ids) { row(out, s.rows().get(id)); out.writeBoolean(s.needsReconfirmation().contains(id)); }
     }
     static ProjectSnapshot snapshot(DataInputStream in) throws IOException {
+        return snapshot(in, false);
+    }
+    static ProjectSnapshot legacySnapshot(DataInputStream in) throws IOException {
+        return snapshot(in, true);
+    }
+    private static ProjectSnapshot snapshot(DataInputStream in, boolean legacy) throws IOException {
         ProjectScope scope = scope(in); String name = text(in, 256); UUID creator = uuid(in);
-        Set<UUID> viewers = new HashSet<>(); int n = count(in, SharedLimits.PARTICIPANTS - 1);
-        for (int i = 0; i < n; i++) if (!viewers.add(uuid(in))) throw new IllegalArgumentException("Duplicate viewer");
+        Map<UUID, ProjectRole> members = new HashMap<>();
+        if (legacy) members.put(creator, ProjectRole.ADMINISTRATOR);
+        int n = count(in, legacy ? SharedLimits.PARTICIPANTS - 1 : SharedLimits.PARTICIPANTS);
+        for (int i = 0; i < n; i++) {
+            UUID member = uuid(in); ProjectRole role = legacy ? ProjectRole.VIEWER : enumeration(in, ProjectRole.values());
+            if (members.put(member, role) != null) throw new IllegalArgumentException("Duplicate participant");
+        }
         long revision = in.readLong(); SharedManifest manifest = manifest(in);
         Map<TaskId, TaskState> rows = new HashMap<>(); Set<TaskId> recheck = new HashSet<>(); n = count(in, 2 * SharedLimits.ROWS_PER_LIST);
         for (int i = 0; i < n; i++) { TaskState row = row(in);
             if (rows.put(row.taskId(), row) != null) throw new IllegalArgumentException("Duplicate row"); if (bool(in)) recheck.add(row.taskId()); }
-        return new ProjectSnapshot(scope, name, creator, viewers, revision, manifest, rows, recheck);
+        return new ProjectSnapshot(scope, name, creator, members, revision, manifest, rows, recheck);
     }
     private static List<TaskId> ordered(Set<TaskId> ids) {
         return ids.stream().sorted(Comparator.comparing((TaskId id) -> id instanceof MaterialTaskId ? 0 : 1).thenComparing(TaskId::externalForm)).toList();
@@ -163,7 +174,9 @@ public final class SharedBinary {
     public static byte[] encodeArchive(ProjectArchive a) {
         return encode(SharedLimits.ARCHIVE_BYTES, out -> {
             out.writeLong(a.generation()); snapshot(out, a.snapshot()); out.writeInt(a.operations().size());
-            for (ProjectArchive.Operation op : a.operations()) { uuid(out, op.actor()); command(out, op.command()); result(out, op.result()); instant(out, op.recordedAt()); }
+            for (ProjectArchive.Operation op : a.operations()) {
+                uuid(out, op.actor()); command(out, op.command()); result(out, op.result()); instant(out, op.recordedAt()); out.writeBoolean(op.memberAllowed());
+            }
             out.writeInt(a.retired().size()); for (ProjectArchive.Retired retired : a.retired()) {
                 out.writeLong(retired.manifestVersion()); row(out, retired.row());
                 if (retired.region() != null) region(out, retired.region()); else out.writeLong(retired.materialCount());
@@ -171,10 +184,17 @@ public final class SharedBinary {
         });
     }
     public static ProjectArchive decodeArchive(byte[] bytes) {
+        return decodeArchive(bytes, false);
+    }
+    /** Persistence-only schema-1 migration; never used by the network decoder. */
+    public static ProjectArchive decodeLegacyArchive(byte[] bytes) {
+        return decodeArchive(bytes, true);
+    }
+    private static ProjectArchive decodeArchive(byte[] bytes, boolean legacy) {
         return decode(bytes, SharedLimits.ARCHIVE_BYTES, in -> {
-            long generation = in.readLong(); ProjectSnapshot snapshot = snapshot(in);
+            long generation = in.readLong(); ProjectSnapshot snapshot = snapshot(in, legacy);
             List<ProjectArchive.Operation> ops = new ArrayList<>(); int n = count(in, SharedLimits.OPERATIONS);
-            for (int i = 0; i < n; i++) ops.add(new ProjectArchive.Operation(uuid(in), command(in), result(in), instant(in)));
+            for (int i = 0; i < n; i++) ops.add(new ProjectArchive.Operation(uuid(in), command(in), result(in), instant(in), !legacy && bool(in)));
             List<ProjectArchive.Retired> retired = new ArrayList<>(); n = count(in, SharedLimits.RETIRED_ROWS);
             for (int i = 0; i < n; i++) { long version = in.readLong(); TaskState row = row(in);
                 retired.add(new ProjectArchive.Retired(version, row, row.taskId() instanceof RegionTaskId ? region(in) : null,

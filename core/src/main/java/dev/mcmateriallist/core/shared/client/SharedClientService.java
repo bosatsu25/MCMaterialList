@@ -49,8 +49,9 @@ public final class SharedClientService implements AutoCloseable {
             require(!before.recoveredJournalUncertain() && original.equals(binding.shared()) && actor.equals(original.actor()) && command.scope().equals(original.scope())
                 && binding.cache() != null && (kind == DatasetKind.MATERIALS) == (command.taskId() instanceof MaterialTaskId));
             var snapshot = binding.cache().snapshot(); var row = snapshot.rows().get(command.taskId());
-            require(snapshot.canWrite(actor) && row != null && row.rowVersion() == command.expectedRowVersion()
+            require(ProjectPermissions.allows(snapshot, actor, row, command.intent()) && row.rowVersion() == command.expectedRowVersion()
                 && snapshot.manifest().version() == command.expectedManifestVersion());
+            require(!(command.intent() instanceof SharedCommand.Assign assign) || snapshot.canRead(assign.target()));
             require(!hasUnknown(before, actor, command.scope())
                 && before.operations().stream().noneMatch(operation -> operation.command().operationId().equals(command.operationId())));
             if (before.operations().stream().filter(operation -> operation.confirmation() == null).count() >= UNKNOWN_OPERATIONS)

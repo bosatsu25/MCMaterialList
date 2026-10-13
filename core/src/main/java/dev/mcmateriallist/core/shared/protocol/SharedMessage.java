@@ -3,7 +3,7 @@ package dev.mcmateriallist.core.shared.protocol;
 import dev.mcmateriallist.core.shared.*;
 import java.util.*;
 
-/** Protocol v1. Identity of the requester never appears in request fields. */
+/** Protocol v2. Identity of the requester never appears in request fields. */
 public sealed interface SharedMessage {
     record Hello(int protocolVersion) implements SharedMessage {}
     record Capabilities(UUID worldNamespace, int protocolVersion, int materialRows, int regionRows,
@@ -13,7 +13,7 @@ public sealed interface SharedMessage {
                 || regionRows < 1 || regionRows > SharedLimits.ROWS_PER_LIST || participants < 1 || participants > SharedLimits.PARTICIPANTS
                 || messageBytes < 1 || messageBytes > SharedLimits.MESSAGE_BYTES || fragmentBytes < 1 || fragmentBytes > SharedLimits.FRAGMENT_BYTES)
                 throw new IllegalArgumentException("Invalid capabilities"); }
-        public static Capabilities current(UUID world) { return new Capabilities(world, 1, SharedLimits.ROWS_PER_LIST,
+        public static Capabilities current(UUID world) { return new Capabilities(world, SharedProtocol.VERSION, SharedLimits.ROWS_PER_LIST,
             SharedLimits.ROWS_PER_LIST, SharedLimits.PARTICIPANTS, SharedLimits.MESSAGE_BYTES, SharedLimits.FRAGMENT_BYTES); }
     }
     record ListProjects(UUID requestId, UUID worldNamespace) implements SharedMessage {
@@ -43,6 +43,10 @@ public sealed interface SharedMessage {
     }
     record SetViewer(UUID requestId, ProjectScope scope, long expectedProjectRevision, UUID target, boolean granted) implements SharedMessage {
         public SetViewer { Objects.requireNonNull(requestId); Objects.requireNonNull(scope); Objects.requireNonNull(target);
+            if (expectedProjectRevision < 0) throw new IllegalArgumentException("Invalid version"); }
+    }
+    record SetMembership(UUID requestId, ProjectScope scope, long expectedProjectRevision, UUID target, ProjectRole role) implements SharedMessage {
+        public SetMembership { Objects.requireNonNull(requestId); Objects.requireNonNull(scope); Objects.requireNonNull(target);
             if (expectedProjectRevision < 0) throw new IllegalArgumentException("Invalid version"); }
     }
     /** Correlates create/join/admin responses; only OK carries content. */

@@ -31,10 +31,16 @@ final class SharedClientCodec {
         return buffer.toByteArray();
     }
     static SharedClientArchive decode(byte[] bytes) {
+        return decode(bytes, false);
+    }
+    static SharedClientArchive decodeLegacy(byte[] bytes) {
+        return decode(bytes, true);
+    }
+    private static SharedClientArchive decode(byte[] bytes, boolean legacy) {
         if (bytes.length > MAX_BYTES) throw new IllegalArgumentException("Client shared state capacity");
         try (var in = new DataInputStream(new ByteArrayInputStream(bytes))) {
             long generation = in.readLong(); var placement = new LocalPlacementId(uuid(in)); boolean recovered = bool(in);
-            var materials = binding(in); var regions = binding(in);
+            var materials = binding(in, legacy); var regions = binding(in, legacy);
             int count = in.readInt();
             if (count < 0 || count > SharedClientArchive.MAX_OPERATIONS) throw new IllegalArgumentException("Client operation capacity");
             List<SharedClientArchive.Operation> operations = new ArrayList<>(count);
@@ -43,7 +49,7 @@ final class SharedClientCodec {
                 if (tag > 1) throw new IllegalArgumentException("Invalid binding kind");
                 var kind = tag == 0 ? DatasetKind.MATERIALS : DatasetKind.REGIONS;
                 var original = reference(in); var connection = uuid(in);
-                if (!(SharedProtocol.decode(blob(in)) instanceof SharedMessage.TaskCommand message))
+                if (!(message(blob(in), legacy) instanceof SharedMessage.TaskCommand message))
                     throw new IllegalArgumentException("Invalid journal command");
                 SharedClientArchive.Confirmation confirmation = null;
                 if (bool(in)) {
@@ -68,18 +74,21 @@ final class SharedClientCodec {
             blob(out, SharedProtocol.encode(new SharedMessage.Snapshot(CACHE_REQUEST, SharedEvents.Status.OK, binding.cache().snapshot())));
         }
     }
-    private static SharedClientArchive.Binding binding(DataInputStream in) throws IOException {
+    private static SharedClientArchive.Binding binding(DataInputStream in, boolean legacy) throws IOException {
         DatasetId local = bool(in) ? new DatasetId(uuid(in)) : null;
         var shared = bool(in) ? reference(in) : null;
         SharedClientArchive.Cache cache = null;
         if (bool(in)) {
             long cursor = in.readLong();
-            if (!(SharedProtocol.decode(blob(in)) instanceof SharedMessage.Snapshot snapshot)
+            if (!(message(blob(in), legacy) instanceof SharedMessage.Snapshot snapshot)
                 || snapshot.status() != SharedEvents.Status.OK || !snapshot.requestId().equals(CACHE_REQUEST))
                 throw new IllegalArgumentException("Invalid confirmed cache");
             cache = new SharedClientArchive.Cache(snapshot.snapshot(), cursor);
         }
         return new SharedClientArchive.Binding(local, shared, cache);
+    }
+    private static SharedMessage message(byte[] bytes, boolean legacy) {
+        return legacy ? SharedProtocol.decodeLegacyPersisted(bytes) : SharedProtocol.decode(bytes);
     }
     private static void reference(DataOutputStream out, SharedClientArchive.Reference ref) throws IOException {
         uuid(out, ref.bindingId()); uuid(out, ref.actor());

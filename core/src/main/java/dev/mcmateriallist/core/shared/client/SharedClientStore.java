@@ -14,6 +14,7 @@ import java.util.*;
 
 /** Synchronous boundary; the lifecycle-owned service invokes this off the client thread. */
 public final class SharedClientStore {
+    public static final int SCHEMA = 2;
     public static final int MAX_JSON_BYTES = ((SharedClientCodec.MAX_BYTES + 2) / 3) * 4 + 128;
     public record Result(StoreStatus status, SharedClientArchive value) {
         public boolean ok() { return status == StoreStatus.OK; }
@@ -103,13 +104,15 @@ public final class SharedClientStore {
         catch (java.nio.charset.CharacterCodingException invalid) { return Result.failure(StoreStatus.CORRUPT); }
     }
     private static Result parse(String json, LocalPlacementId placement) {
-        var schema = dev.mcmateriallist.core.shared.persistence.SharedSchemaHeader.classify(json, Set.of("schema", "payload"));
+        var schema = dev.mcmateriallist.core.shared.persistence.SharedSchemaHeader.classify(json, Set.of("schema", "payload"), SCHEMA);
         if (schema != StoreStatus.OK) return Result.failure(schema);
         try (var reader = new JsonReader(new StringReader(json))) {
             reader.setStrictness(com.google.gson.Strictness.STRICT); reader.beginObject();
-            String payload = null;
+            String payload = null; int version = 0;
             while (reader.hasNext()) {
-                if (reader.nextName().equals("payload")) {
+                String name = reader.nextName();
+                if (name.equals("schema")) version = Integer.parseInt(reader.nextString());
+                else if (name.equals("payload")) {
                     if (reader.peek() != JsonToken.STRING) return Result.failure(StoreStatus.CORRUPT);
                     payload = reader.nextString();
                     if (payload.length() > ((long) SharedClientCodec.MAX_BYTES + 2) / 3 * 4) return Result.failure(StoreStatus.TOO_LARGE);
@@ -117,12 +120,13 @@ public final class SharedClientStore {
             }
             reader.endObject(); if (reader.peek() != JsonToken.END_DOCUMENT) return Result.failure(StoreStatus.CORRUPT);
             if (payload == null) return Result.failure(StoreStatus.CORRUPT);
-            var archive = SharedClientCodec.decode(Base64.getDecoder().decode(payload));
+            byte[] bytes = Base64.getDecoder().decode(payload);
+            var archive = version == 1 ? SharedClientCodec.decodeLegacy(bytes) : SharedClientCodec.decode(bytes);
             return archive.placement().equals(placement) ? new Result(StoreStatus.OK, archive) : Result.failure(StoreStatus.CORRUPT);
         } catch (IOException | IllegalArgumentException | IllegalStateException invalid) { return Result.failure(StoreStatus.CORRUPT); }
     }
     private static String encode(SharedClientArchive archive) {
-        return "{\"schema\":1,\"payload\":\"" + Base64.getEncoder().encodeToString(SharedClientCodec.encode(archive)) + "\"}";
+        return "{\"schema\":" + SCHEMA + ",\"payload\":\"" + Base64.getEncoder().encodeToString(SharedClientCodec.encode(archive)) + "\"}";
     }
     private static String readText(Path file) throws IOException {
         try (var input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {

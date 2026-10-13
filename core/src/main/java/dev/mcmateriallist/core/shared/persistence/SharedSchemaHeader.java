@@ -14,7 +14,11 @@ public final class SharedSchemaHeader {
     private SharedSchemaHeader() {}
 
     public static StoreStatus classify(String json, Set<String> currentFields) {
-        try (var reader = new JsonReader(new StringReader(normalizeLongNumbers(json)))) {
+        return classify(json, currentFields, 1);
+    }
+    public static StoreStatus classify(String json, Set<String> currentFields, int supported) {
+        if (supported < 1 || supported > 8) throw new IllegalArgumentException("Unsupported schema ceiling");
+        try (var reader = new JsonReader(new StringReader(normalizeLongNumbers(json, supported)))) {
             reader.setStrictness(Strictness.STRICT); reader.beginObject();
             var seen = new HashSet<String>();
             boolean invalid = false, schemaSeen = false;
@@ -23,7 +27,7 @@ public final class SharedSchemaHeader {
                 String name = reader.nextName();
                 if (name.equals("schema")) {
                     if (schemaSeen || reader.peek() != JsonToken.NUMBER) return StoreStatus.CORRUPT;
-                    schemaSeen = true; schema = numeric(reader.nextString());
+                    schemaSeen = true; schema = numeric(reader.nextString(), supported);
                 } else reader.skipValue();
                 // Do not retain arbitrary attacker-controlled field names.
                 if (!currentFields.contains(name)) invalid = true;
@@ -37,7 +41,7 @@ public final class SharedSchemaHeader {
     }
 
     /** Gson's numeric lookahead has a fixed buffer. Preserve classification of longer valid tokens. */
-    private static String normalizeLongNumbers(String json) {
+    private static String normalizeLongNumbers(String json, int supported) {
         StringBuilder normalized = null;
         int copied = 0;
         boolean quoted = false, escaped = false;
@@ -55,7 +59,7 @@ public final class SharedSchemaHeader {
                 String token = json.substring(start, i + 1);
                 if (!validNumber(token)) continue;
                 if (normalized == null) normalized = new StringBuilder();
-                normalized.append(json, copied, start).append(numeric(token) == StoreStatus.UNSUPPORTED_SCHEMA ? '2' : '0');
+                normalized.append(json, copied, start).append(numeric(token, supported) == StoreStatus.UNSUPPORTED_SCHEMA ? supported + 1 : 0);
                 copied = i + 1;
             }
         }
@@ -84,8 +88,8 @@ public final class SharedSchemaHeader {
         return start;
     }
 
-    private static StoreStatus numeric(String token) {
-        if (token.equals("1")) return StoreStatus.OK;
+    private static StoreStatus numeric(String token, int supported) {
+        if (token.length() == 1 && token.charAt(0) >= '1' && token.charAt(0) <= '0' + supported) return StoreStatus.OK;
         if (token.startsWith("-")) return StoreStatus.CORRUPT;
         int exponentAt = token.indexOf('e');
         if (exponentAt < 0) exponentAt = token.indexOf('E');
@@ -113,6 +117,6 @@ public final class SharedSchemaHeader {
         long shift = exponent - fraction;
         if (shift < -trailing) return StoreStatus.CORRUPT; // Fractional values are not schema versions.
         long length = digits - leading + shift;
-        return length > 1 || length == 1 && first > 1 ? StoreStatus.UNSUPPORTED_SCHEMA : StoreStatus.CORRUPT;
+        return length > 1 || length == 1 && first > supported ? StoreStatus.UNSUPPORTED_SCHEMA : StoreStatus.CORRUPT;
     }
 }
