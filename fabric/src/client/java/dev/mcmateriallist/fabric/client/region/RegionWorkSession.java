@@ -26,31 +26,39 @@ import net.minecraft.network.chat.Component;
 public final class RegionWorkSession {
     private final GuiPlacementConfiguration screen;
     private final LocalPlacementId placement;
+    private final dev.mcmateriallist.fabric.client.shared.SharedWorkBackend shared;
     private RegionWorkDataset confirmed;
     private StoreStatus status;
     private boolean pending, loaded, showInfo, hideDone, recoveryConfirmed;
     private ButtonGeneric refreshButton, recoverButton;
     private int toolbarStart, toolbarWidth, toolbarY;
+    private long sharedVersion = -1;
+    private boolean sharedRebuild;
     public RegionWorkSession(GuiPlacementConfiguration screen) {
         this.screen = screen;
         var capture = PlacementWorkAdapter.captureRegions(screen.getSchematicPlacement());
         placement = capture.status() == PlacementWorkAdapter.Status.OK ? capture.snapshot().placementId() : null;
         if (placement == null) status = StoreStatus.INVALID_DEFINITION;
+        shared = new dev.mcmateriallist.fabric.client.shared.SharedWorkBackend(MCMaterialListClient.shared(), placement, DatasetKind.REGIONS,
+            screen::getSchematicPlacement, () -> screen.getSchematicPlacement().getMaterialList(), this::ready);
     }
+    public dev.mcmateriallist.fabric.client.shared.SharedWorkBackend shared() { return shared; }
     public static String text(String key, Object... args) { return Component.translatable("mcmateriallist.region." + key, args).getString(); }
     public RegionWorkDataset dataset() { return confirmed; }
     public StoreStatus status() { return status; }
-    public boolean pending() { return pending; }
+    public boolean pending() { return pending || shared.pending(); }
     public boolean showInfo() { return showInfo; }
     public boolean hideDone() { return hideDone; }
     public boolean compact() {
         return WorkScreenGeometry.compact(screen.getScreenWidth(), screen.getScreenHeight())
             && status != StoreStatus.RECOVERY_REQUIRED && (confirmed == null || confirmed.archived().isEmpty());
     }
-    public TaskState state(RegionTaskId id) { return confirmed == null || id == null ? null : confirmed.states().get(id); }
-    public boolean review(RegionTaskId id) { return confirmed != null && id != null && confirmed.activeReviewRequired().contains(id); }
+    public TaskState state(RegionTaskId id) { return id == null ? null : shared.selected() ? shared.state(id) : confirmed == null ? null : confirmed.states().get(id); }
+    public boolean review(RegionTaskId id) { return shared.selected() ? shared.review(id) : confirmed != null && id != null && confirmed.activeReviewRequired().contains(id); }
+    public Progress progress() { return shared.selected() ? shared.progress() : confirmed == null ? null : confirmed.progress(); }
     /** Resolve by exact original descriptor; ambiguity remains unavailable, never guessed. */
     public RegionTaskId id(String key) {
+        if (shared.selected()) return shared.region(key);
         if (confirmed == null) return null;
         var capture = PlacementWorkAdapter.captureRegions(screen.getSchematicPlacement());
         if (capture.status() != PlacementWorkAdapter.Status.OK) return null;
@@ -65,9 +73,10 @@ public final class RegionWorkSession {
         var capture = capture();
         return capture.status() == PlacementWorkAdapter.Status.OK && placement.equals(capture.snapshot().placementId());
     }
-    public boolean writable() { return !pending && ready() && status == StoreStatus.OK && confirmed != null; }
-    public boolean writable(RegionTaskId id) { return writable() && state(id) != null && !review(id); }
+    public boolean writable() { return shared.selected() ? shared.writable() : !pending && !shared.loading() && ready() && status == StoreStatus.OK && confirmed != null; }
+    public boolean writable(RegionTaskId id) { return writable() && state(id) != null && (shared.selected() || !review(id)); }
     public String feedback() {
+        if (shared.loading() || shared.selected()) return shared.feedback();
         if (pending) return text("saving");
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return text("storage", status.name());
         return !ready() ? text("waiting") : status == StoreStatus.OK ? text("local") : text("untracked");
@@ -80,35 +89,48 @@ public final class RegionWorkSession {
         int slots = status == StoreStatus.RECOVERY_REQUIRED || (confirmed != null && !confirmed.archived().isEmpty()) ? 4 : 3;
         toolbarWidth = Math.max(20, (end - toolbarStart) / (compact() ? 3 : slots) - 2);
         toolbarY = compact() ? 44 : 64;
-        refreshButton = add(0, text(status == StoreStatus.MISSING ? "track" : "refresh"), (button, mouse) -> refresh());
+        refreshButton = add(0, text(!shared.selected() && status == StoreStatus.MISSING ? "track" : "refresh"), (button, mouse) -> refresh());
         add(1, text("hide_done", hideDone ? "ON" : "OFF"), (button, mouse) -> { hideDone = !hideDone; screen.initGui(); });
         add(2, text("show_info", showInfo ? "ON" : "OFF"), (button, mouse) -> { showInfo = !showInfo; screen.initGui(); });
         recoverButton = null;
-        if (status == StoreStatus.RECOVERY_REQUIRED) {
+        if (!shared.selected() && status == StoreStatus.RECOVERY_REQUIRED) {
             recoverButton = add(3, text(recoveryConfirmed ? "confirm_recovery" : "recover"), (button, mouse) -> {
                 if (!recoveryConfirmed) { recoveryConfirmed = true; screen.addMessage(MessageType.WARNING, text("recovery_warning")); screen.initGui(); }
-                else if (!pending && ready()) {
+                else if (!pending && !shared.loading() && ready()) {
                     recoveryConfirmed = false;
                     await(MCMaterialListClient.work().recover(placement, DatasetKind.REGIONS), this::publish);
                 }
             });
-        } else if (confirmed != null && !confirmed.archived().isEmpty()) {
+        } else if (!shared.selected() && confirmed != null && !confirmed.archived().isEmpty()) {
             add(3, text("archived", confirmed.archived().size()), (button, mouse) -> GuiBase.openGui(new RegionArchiveScreen(screen, this)));
         }
         renderControls();
+        var share = screen.addButton(new ButtonGeneric(compact() ? screen.getScreenWidth() - 128 : 126,
+            screen.getScreenHeight() - (compact() ? 22 : 44), 116, 20,
+            dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("entry")),
+            (button, mouse) -> GuiBase.openGui(new dev.mcmateriallist.fabric.client.shared.SharedWorkScreen(screen, shared)));
+        share.setHoverStrings(dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("title"));
     }
     private ButtonGeneric add(int slot, String label, IButtonActionListener action) {
         var button = new ButtonGeneric(toolbarStart + slot * (toolbarWidth + 2), toolbarY, toolbarWidth, 20, MaterialPresentation.clamp(label, toolbarWidth - 8));
         button.setHoverStrings(label); return screen.addButton(button, action);
     }
     private void renderControls() {
-        if (refreshButton != null) refreshButton.setEnabled(!pending && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT));
-        if (recoverButton != null) recoverButton.setEnabled(!pending && ready());
+        if (refreshButton != null) refreshButton.setEnabled(!shared.loading() && (shared.selected() ? !shared.pending() && ready() : !pending && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT)));
+        if (recoverButton != null) recoverButton.setEnabled(!pending && !shared.loading() && ready());
     }
     public void footer(GuiContext ctx) {
+        if (!sharedRebuild && sharedVersion != shared.version()) {
+            sharedVersion = shared.version(); sharedRebuild = true;
+            Minecraft.getInstance().schedule(() -> {
+                sharedRebuild = false;
+                if (Minecraft.getInstance().gui.screen() == screen) screen.initGui();
+            });
+        }
         renderControls();
-        String progress = confirmed == null ? text("untracked") : text("progress", confirmed.progress().completed(), confirmed.progress().total(), confirmed.progress().percentage());
-        if (confirmed != null) progress = dev.mcmateriallist.core.ui.WorkProgressPresentation.style(progress, confirmed.progress());
+        var valueProgress = progress();
+        String progress = valueProgress == null ? text("untracked") : text("progress", valueProgress.completed(), valueProgress.total(), valueProgress.percentage());
+        if (valueProgress != null) progress = dev.mcmateriallist.core.ui.WorkProgressPresentation.style(progress, valueProgress);
         int x = compact() ? 120 : 12;
         int y = screen.getScreenHeight() - (compact() ? 17 : 60);
         String value = MaterialPresentation.clamp(progress + "  " + feedback(), Math.max(0, screen.getScreenWidth() - x - 140));
@@ -116,6 +138,8 @@ public final class RegionWorkSession {
         screen.drawString(ctx, value, x, y, 0xFFFFFFFF);
     }
     public void refresh() {
+        if (shared.loading()) return;
+        if (shared.selected()) { shared.refresh(); return; }
         if (pending || !ready()) return;
         await(MCMaterialListClient.work().refreshRegions(capture().snapshot()), result -> publish(result.storage()));
     }
@@ -128,11 +152,13 @@ public final class RegionWorkSession {
         feedbackTarget().addMessage(MessageType.WARNING, text("refresh_required")); return false;
     }
     public void command(RegionTaskId id, TaskCommand command) {
+        if (shared.selected()) { shared.command(id, command); return; }
         var mc = Minecraft.getInstance();
         if (!writable(id) || mc.player == null || !currentDefinitions()) return;
         await(MCMaterialListClient.work().update(placement, id, command, mc.player.getUUID(), Instant.now()), this::updated);
     }
     public void acknowledge(RegionTaskId id) {
+        if (shared.selected()) return;
         if (!writable() || !review(id) || !currentDefinitions()) return;
         await(MCMaterialListClient.work().acknowledgeRegion(placement, id), this::updated);
     }

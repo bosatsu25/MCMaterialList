@@ -46,3 +46,8 @@ tasks.register('verifyPhase2') {
     description = 'Run Phase 0/1 regressions, durable material and region UI interactions and fresh-process restoration, plus server isolation.'
     dependsOn 'verifyPhase1'
 }
+tasks.register('verifyPhase3') {
+    group = 'verification'
+    description = 'Run all retained local/restart/server gates, shared socket transport, and native shared UI integration.'
+    dependsOn 'verifyPhase2', ':fabric:verifySharedTransport', ':fabric:runSharedUiTest'
+}

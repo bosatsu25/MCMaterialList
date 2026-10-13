@@ -8,13 +8,19 @@ import org.slf4j.LoggerFactory;
 
 public final class MCMaterialListClient implements ClientModInitializer {
     private static LocalWorkService work;
+    private static dev.mcmateriallist.fabric.client.shared.SharedWorkController shared;
     public static LocalWorkService work() { return work; }
+    public static dev.mcmateriallist.fabric.client.shared.SharedWorkController shared() { return shared; }
     @Override
     public void onInitializeClient() {
+        dev.mcmateriallist.fabric.client.shared.SharedClientNetworking.initialize();
         var logger = LoggerFactory.getLogger("mcmateriallist");
         if (Compatibility.isSupported()) {
             work = new LocalWorkService(FabricLoader.getInstance().getConfigDir().resolve("mcmateriallist"));
+            shared = new dev.mcmateriallist.fabric.client.shared.SharedWorkController(FabricLoader.getInstance().getConfigDir().resolve("mcmateriallist"));
             ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+                dev.mcmateriallist.fabric.client.shared.SharedSourceLoading.shutdown();
+                if (shared != null) { shared.shutdown(); shared = null; }
                 LocalWorkService current = work; work = null;
                 if (current != null) current.close();
             });

@@ -153,7 +153,7 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
             context.setScreen(() -> new GuiPlacementConfiguration(placement));
             var reopened = context.computeOnClient(mc -> session((GuiPlacementConfiguration) mc.gui.screen())); idle(context, reopened);
             check(work.dataset().equals(reopened.dataset()) && Arrays.equals(persisted, Files.readAllBytes(primary)), "Region reopen changed storage");
-        } catch (java.io.IOException failure) { throw new AssertionError("Region fixture failed", failure); }
+        } catch (java.io.IOException failure) { throw new AssertionError("Region fixture failed", failure); } finally { FixtureWorlds.drainSources(); }
     }
     private static void saveReferenceNote(ClientGameTestContext context, GuiPlacementConfiguration screen, RegionWorkSession work, int number, String value) {
         String key = "Region " + number;

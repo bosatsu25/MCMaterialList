@@ -96,7 +96,7 @@ public final class Phase1ClientTest implements FabricClientGameTest {
             context.runOnClient(mc -> check(placement.isEnabled() && placement.isRenderingEnabled() && placement.getRelativeSubRegionPlacement("Region 2").isEnabled() && placement.getRelativeSubRegionPlacement("Region 2").isRenderingEnabled(), "Work completion changed placement state"));
             check(Arrays.equals(bytes, Files.readAllBytes(placement.getSchematicFile())), "Work persistence modified schematic");
         } catch (IOException | ExecutionException exception) { throw new AssertionError("Phase 1 integration failed", exception); }
-        catch (InterruptedException exception) { Thread.currentThread().interrupt(); throw new AssertionError("Phase 1 integration interrupted", exception); }
+        catch (InterruptedException exception) { Thread.currentThread().interrupt(); throw new AssertionError("Phase 1 integration interrupted", exception); } finally { FixtureWorlds.drainSources(); }
     }
     private static SchematicPlacement fixture(Path root, BlockPos origin) throws java.io.IOException {
         Path directory = Files.createTempDirectory(root, "schematic-"); AreaSelection selection = new AreaSelection();

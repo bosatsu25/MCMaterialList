@@ -7,6 +7,9 @@ import org.slf4j.LoggerFactory;
 public final class MCMaterialList implements ModInitializer {
     @Override
     public void onInitialize() {
+        dev.mcmateriallist.fabric.shared.SharedPayload.register();
+        dev.mcmateriallist.fabric.shared.SharedControlPayload.register();
+        dev.mcmateriallist.fabric.shared.SharedServerNetworking.initialize();
         LoggerFactory.getLogger("mcmateriallist").info("MCMaterialList Phase 0 common initialized");
     }
 }

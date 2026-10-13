@@ -7,7 +7,10 @@ import fi.dy.masa.malilib.render.GuiContext;
 public final class RegionDoneButton extends ButtonGeneric {
     private final RegionWorkSession session;
     private final RegionTaskId id;
-    public RegionDoneButton(int x, int y, RegionWorkSession session, RegionTaskId id) { super(x, y, 20, 20, ""); this.session = session; this.id = id; }
+    public RegionDoneButton(int x, int y, RegionWorkSession session, RegionTaskId id) {
+        super(x, y, 20, 20, ""); this.session = session; this.id = id;
+        setEnabled(session.writable(id));
+    }
     @Override public void render(GuiContext ctx, int mouseX, int mouseY, boolean selected) {
         setEnabled(session.writable(id));
         super.render(ctx, mouseX, mouseY, selected);

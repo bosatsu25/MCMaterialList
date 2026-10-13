@@ -7,6 +7,12 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContex
 /** Keeps upstream per-world configuration from importing another test's placements. */
 final class FixtureWorlds {
     private FixtureWorlds() {}
+    static void drainSources() {
+        try {
+            if (!dev.mcmateriallist.fabric.client.shared.SharedSourceLoading.awaitIdle(10, java.util.concurrent.TimeUnit.SECONDS))
+                throw new AssertionError("Native source observations did not drain");
+        } catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
+    }
 
     static TestSingleplayerContext create(ClientGameTestContext context, String phase) {
         // World saves are deleted by Fabric, but Litematica retains their configuration.

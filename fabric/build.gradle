@@ -117,6 +117,9 @@ tasks.register('verifyServerSmoke') {
         if (!log.contains('Phase 0 dedicated server isolation PASS') || !log.contains('MCMaterialList Phase 0 common initialized')) {
             throw new GradleException('Dedicated server did not reach the initialization/isolation checkpoint.')
         }
+        if (!log.contains('Shared authority isolated asynchronous readiness PASS')) {
+            throw new GradleException('Isolated shared authority did not reach its asynchronous readiness checkpoint.')
+        }
     }
 }
 
@@ -144,3 +147,120 @@ tasks.register('verifyIsolation') {
     }
 }
 tasks.named('check') { dependsOn 'verifyIsolation' }
+
+// Dedicated focused transport mod, excluded from the application archive.
+sourceSets {
+    transportTest {
+        compileClasspath += sourceSets.gametest.compileClasspath
+        runtimeClasspath += sourceSets.gametest.runtimeClasspath
+    }
+}
+dependencies { transportTestImplementation sourceSets.client.output }
+loom.mods {
+    'mcmateriallist-shared-transport-test' { sourceSet sourceSets.transportTest }
+}
+loom.runs {
+    sharedTransportTest {
+        inherit clientGameTest
+        source sourceSets.transportTest
+        vmArg '-Dfabric.client.gametest.modid=mcmateriallist-shared-transport-test'
+        if (providers.gradleProperty('transportRespawnFirst').map { it == 'true' }.getOrElse(false))
+            vmArg '-Dmcmateriallist.transportTest.respawnFirst=true'
+        runDir 'build/run/sharedTransportTest'
+    }
+}
+tasks.register('prepareSharedTransportTest') {
+    doLast {
+        if (!providers.gradleProperty('acceptMinecraftEula').map { it == 'true' }.getOrElse(false)) {
+            throw new GradleException('Pass -PacceptMinecraftEula=true only after accepting the Minecraft EULA.')
+        }
+        def directory = layout.buildDirectory.dir('run/sharedTransportTest').get().asFile
+        directory.mkdirs()
+        new File(directory, 'eula.txt').text = 'eula=true\n'
+    }
+}
+tasks.named('runSharedTransportTest') {
+    dependsOn 'prepareSharedTransportTest'
+    doFirst { ext.transportStartedMillis = System.currentTimeMillis() }
+    doLast {
+        def log = layout.buildDirectory.file('run/sharedTransportTest/logs/latest.log').get().asFile
+        if (!log.exists() || log.lastModified() < transportStartedMillis) {
+            throw new GradleException('Shared transport test produced no current log.')
+        }
+        def evidence = log.text
+        if (!evidence.contains('Shared transport all assertions PASS')
+            || evidence.contains('Client gametests failed with an exception')) {
+            throw new GradleException('Shared transport test did not complete every assertion successfully; inspect controlled log.')
+        }
+    }
+}
+tasks.register('verifySharedTransport') {
+    group = 'verification'
+    dependsOn 'runSharedTransportTest', 'verifyIsolation', 'verifyApplicationJar'
+}
+tasks.register('verifyApplicationJar') {
+    group = 'verification'
+    dependsOn 'jar'
+    doLast {
+        zipTree(tasks.jar.archiveFile.get().asFile).visit { entry ->
+            if (entry.relativePath.pathString == 'fabric.mod.json') {
+                def metadata = new groovy.json.JsonSlurper().parse(entry.file)
+                if (metadata.id != 'mcmateriallist' || metadata.version != project.version.toString()) {
+                    throw new GradleException('Application JAR contains unexpected mod metadata.')
+                }
+            }
+            if (entry.relativePath.pathString.contains('dev/mcmateriallist/fabric/test/')
+                || entry.relativePath.pathString.contains('mcmateriallist.test.mixins')
+                || entry.relativePath.pathString.contains('mcmateriallist.transport-test.mixins')
+                || entry.relativePath.pathString.contains('mcmateriallist.shared-ui-test.mixins')
+                || entry.relativePath.pathString.contains('serverSmoke')
+                || entry.relativePath.pathString.startsWith('screenshots/')
+                || entry.relativePath.pathString.startsWith('logs/')
+                || entry.relativePath.pathString.endsWith('.log')
+                || entry.relativePath.pathString.startsWith('fi/dy/masa/')) {
+                throw new GradleException('Application JAR contains test-only or optional-mod implementation classes.')
+            }
+        }
+    }
+}
+
+// Focused native shared UI + actual socket fixture. Every helper remains test-only.
+sourceSets {
+    sharedUiTest {
+        compileClasspath += sourceSets.gametest.compileClasspath
+        runtimeClasspath += sourceSets.gametest.runtimeClasspath
+    }
+}
+dependencies { sharedUiTestImplementation sourceSets.client.output }
+loom.mods { 'mcmateriallist-shared-ui-test' { sourceSet sourceSets.sharedUiTest } }
+loom.runs {
+    sharedUiTest {
+        inherit clientGameTest
+        source sourceSets.sharedUiTest
+        vmArg '-Dfabric.client.gametest.modid=mcmateriallist-shared-ui-test'
+        vmArg "-Dmcmateriallist.sharedUiRegression=${providers.gradleProperty('sharedUiRegression').getOrElse('all')}"
+        runDir 'build/run/sharedUiTest'
+    }
+}
+tasks.register('prepareSharedUiTest') {
+    doLast {
+        if (!providers.gradleProperty('acceptMinecraftEula').map { it == 'true' }.getOrElse(false)) {
+            throw new GradleException('Pass -PacceptMinecraftEula=true only after accepting the Minecraft EULA.')
+        }
+        def directory = layout.buildDirectory.dir('run/sharedUiTest').get().asFile
+        directory.mkdirs()
+        new File(directory, 'eula.txt').text = 'eula=true\n'
+    }
+}
+tasks.named('runSharedUiTest') {
+    dependsOn 'prepareSharedUiTest'
+    doFirst { ext.sharedUiStartedMillis = System.currentTimeMillis() }
+    doLast {
+        def log = layout.buildDirectory.file('run/sharedUiTest/logs/latest.log').get().asFile
+        if (!log.exists() || log.lastModified() < sharedUiStartedMillis
+            || !log.text.contains('Shared native UI all assertions PASS')
+            || log.text.contains('Client gametests failed with an exception')) {
+            throw new GradleException('Shared native UI did not complete every assertion; inspect controlled log.')
+        }
+    }
+}

@@ -59,7 +59,7 @@ public final class Phase0ClientTest implements FabricClientGameTest {
             context.runOnClient(mc -> saveRestartFixture(placement));
         } catch (IOException exception) {
             throw new AssertionError("Phase 0 fixture I/O failed", exception);
-        }
+        } finally { FixtureWorlds.drainSources(); }
     }
 
     private static SchematicPlacement createFixture(BlockPos origin) throws IOException {

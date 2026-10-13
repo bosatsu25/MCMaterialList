@@ -244,7 +244,7 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             context.setScreen(() -> new GuiMaterialList(materials));
             var reopened = context.computeOnClient(mc -> session((GuiMaterialList) mc.gui.screen())); idle(context, reopened);
             check(reopened.dataset().generation() == generation && reopened.dataset().states().equals(finalStates), "Reopening wrote/reset work");
-        } catch (java.io.IOException failure) { throw new AssertionError("Phase 2 fixture failed", failure); }
+        } catch (java.io.IOException failure) { throw new AssertionError("Phase 2 fixture failed", failure); } finally { FixtureWorlds.drainSources(); }
     }
     private static MaterialTaskId id(String key) { return new MaterialTaskId("minecraft:" + key); }
     private static void sortByCount(GuiMaterialList screen, MaterialListPlacement materials) {
