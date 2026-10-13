@@ -3,6 +3,6 @@
   "package": "dev.mcmateriallist.fabric.test.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": ["SharedUiResultDelay"],
-  "client": ["SharedUiAccess$Button", "SharedUiAccess$ListScreen", "SharedUiAccess$Rows", "SharedUiAccess$Children", "SharedUiAccess$Input", "SharedUiAccess$MaterialDetail", "SharedUiAccess$Screen", "SharedUiAccess$Messages", "SharedUiAccess$InGameMessages", "SharedUiAdmissionDelay"],
+  "client": ["SharedUiAccess$Button", "SharedUiAccess$ListScreen", "SharedUiAccess$Rows", "SharedUiAccess$Children", "SharedUiAccess$Input", "SharedUiAccess$MaterialDetail", "SharedUiAccess$Screen", "SharedUiAccess$Messages", "SharedUiAccess$InGameMessages", "SharedUiAccess$Client", "SharedUiAccess$Backend", "SharedUiAccess$Controller", "SharedUiAdmissionDelay", "SharedUiStoreBarriers", "SharedUiPublicationProbe", "SharedUiLocalRefreshProbe", "SharedUiSubmissionProbe", "SharedUiDigestBarrier"],
   "injectors": {"defaultRequire": 1}
 }

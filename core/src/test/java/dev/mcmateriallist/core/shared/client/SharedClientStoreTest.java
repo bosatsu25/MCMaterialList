@@ -99,6 +99,53 @@ class SharedClientStoreTest {
         assertEquals(0, backup.generation());
     }
 
+    @Test void reorderedCurrentEnvelopeLoadsWithoutChangingEitherFile() throws Exception {
+        var store = new SharedClientStore(root); var before = archive();
+        assertTrue(store.save(before, -1).ok()); assertTrue(store.save(next(before), 0).ok());
+        String payload = com.google.gson.JsonParser.parseString(Files.readString(file())).getAsJsonObject().get("payload").getAsString();
+        String reordered = "{\"payload\":\"" + payload + "\",\"schema\":1}";
+        Files.writeString(file(), reordered);
+        byte[] backup = Files.readAllBytes(file().resolveSibling(file().getFileName() + ".bak"));
+        assertEquals(next(before), store.load(placement).value());
+        assertEquals(reordered, Files.readString(file()));
+        assertArrayEquals(backup, Files.readAllBytes(file().resolveSibling(file().getFileName() + ".bak")));
+    }
+
+    @Test void reorderedFutureSchemaBlocksLoadSaveAndRecoveryBeforeInterpretingPayload() throws Exception {
+        var store = new SharedClientStore(root); var before = archive();
+        assertTrue(store.save(before, -1).ok()); assertTrue(store.save(next(before), 0).ok());
+        Path backupFile = file().resolveSibling(file().getFileName() + ".bak");
+        byte[] backup = Files.readAllBytes(backupFile);
+        // A future payload need not use this version's Base64 encoding or string type.
+        for (String payload : List.of("\"future format\"", "{\"schema\":1,\"text\":\"schema: 1\"}")) {
+          for (String version : List.of("99", "2147483648")) {
+            String future = "{\"payload\":" + payload + ",\"schema\":" + version + "}";
+            Files.writeString(file(), future);
+            assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.load(placement).status());
+            assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.save(next(next(before)), 1).status());
+            assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.recover(placement).status());
+            assertEquals(future, Files.readString(file())); assertArrayEquals(backup, Files.readAllBytes(backupFile));
+          }
+        }
+        try (var files = Files.list(file().getParent())) {
+            assertFalse(files.anyMatch(path -> path.toString().endsWith(".retained")), "Future format must never enter recovery");
+        }
+    }
+
+    @Test void duplicateUnknownAndMisleadingNestedSchemaCannotBecomeCurrentEnvelope() throws Exception {
+        var store = new SharedClientStore(root); var before = archive(); assertTrue(store.save(before, -1).ok());
+        String payload = com.google.gson.JsonParser.parseString(Files.readString(file())).getAsJsonObject().get("payload").getAsString();
+        for (String invalid : List.of(
+            "{\"schema\":1,\"schema\":1,\"payload\":\"" + payload + "\"}",
+            "{\"payload\":\"" + payload + "\",\"payload\":\"" + payload + "\",\"schema\":1}",
+            "{\"unknown\":1,\"payload\":\"" + payload + "\",\"schema\":1}",
+            "{\"payload\":{\"schema\":1}}")) {
+            Files.writeString(file(), invalid);
+            assertEquals(StoreStatus.CORRUPT, store.load(placement).status());
+            assertEquals(invalid, Files.readString(file()));
+        }
+    }
+
     @Test void deliberateRecoveryPreservesOriginalUnknownMetadataAndDamageButDoesNotInventCompleteJournal() throws Exception {
         var store = new SharedClientStore(root); var before = archive();
         assertEquals(StoreStatus.OK, store.save(before, -1).status());

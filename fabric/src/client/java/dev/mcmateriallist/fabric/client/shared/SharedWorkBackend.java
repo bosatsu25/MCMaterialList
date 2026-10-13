@@ -35,7 +35,7 @@ public final class SharedWorkBackend {
     public Object context() { return java.util.Arrays.asList(reference(), SharedWorkController.actor()); }
     public boolean selected() { return reference() != null; }
     public boolean loading() { return entry != null && entry.loading; }
-    public boolean pending() { return entry != null && (entry.loading || entry.busy > 0); }
+    public boolean pending() { return entry != null && (entry.loading || entry.busy > 0 || controller.cachePending(this)); }
     public long version() { return entry == null ? 0 : entry.version; }
     public boolean writable() { return controller.writable(this); }
     public String feedback() { return text(controller.reason(this)); }

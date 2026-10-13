@@ -103,15 +103,45 @@ public final class SharedClientStore {
         catch (java.nio.charset.CharacterCodingException invalid) { return Result.failure(StoreStatus.CORRUPT); }
     }
     private static Result parse(String json, LocalPlacementId placement) {
+        // Inspect top-level schema before interpreting a payload whose format may be newer.
+        // JSON member order is not a version contract. This pass never builds a payload tree.
+        try (var header = new JsonReader(new StringReader(json))) {
+            header.setStrictness(com.google.gson.Strictness.STRICT); header.beginObject();
+            boolean schemaSeen = false, payloadSeen = false, invalidFields = false;
+            int schema = -1;
+            while (header.hasNext()) {
+                String name = header.nextName();
+                if (name.equals("schema")) {
+                    invalidFields |= schemaSeen; schemaSeen = true;
+                    if (header.peek() != JsonToken.NUMBER) return Result.failure(StoreStatus.CORRUPT);
+                    String version = header.nextString();
+                    if (version.isEmpty() || !version.chars().allMatch(character -> character >= '0' && character <= '9'))
+                        return Result.failure(StoreStatus.CORRUPT);
+                    if (version.length() > 1) return Result.failure(StoreStatus.UNSUPPORTED_SCHEMA);
+                    schema = Integer.parseInt(version);
+                    if (schema > 1) return Result.failure(StoreStatus.UNSUPPORTED_SCHEMA);
+                } else {
+                    if (name.equals("payload")) { invalidFields |= payloadSeen; payloadSeen = true; }
+                    else invalidFields = true;
+                    header.skipValue();
+                }
+            }
+            header.endObject();
+            if (invalidFields || !schemaSeen || !payloadSeen || schema != 1 || header.peek() != JsonToken.END_DOCUMENT)
+                return Result.failure(StoreStatus.CORRUPT);
+        } catch (IOException | IllegalArgumentException | IllegalStateException invalid) { return Result.failure(StoreStatus.CORRUPT); }
         try (var reader = new JsonReader(new StringReader(json))) {
             reader.setStrictness(com.google.gson.Strictness.STRICT); reader.beginObject();
-            if (!reader.nextName().equals("schema")) return Result.failure(StoreStatus.CORRUPT);
-            int schema = reader.nextInt();
-            if (schema > 1) return Result.failure(StoreStatus.UNSUPPORTED_SCHEMA);
-            if (schema != 1 || !reader.nextName().equals("payload")) return Result.failure(StoreStatus.CORRUPT);
-            String payload = reader.nextString();
-            if (payload.length() > ((long) SharedClientCodec.MAX_BYTES + 2) / 3 * 4) return Result.failure(StoreStatus.TOO_LARGE);
+            String payload = null;
+            while (reader.hasNext()) {
+                if (reader.nextName().equals("payload")) {
+                    if (reader.peek() != JsonToken.STRING) return Result.failure(StoreStatus.CORRUPT);
+                    payload = reader.nextString();
+                    if (payload.length() > ((long) SharedClientCodec.MAX_BYTES + 2) / 3 * 4) return Result.failure(StoreStatus.TOO_LARGE);
+                } else reader.skipValue();
+            }
             reader.endObject(); if (reader.peek() != JsonToken.END_DOCUMENT) return Result.failure(StoreStatus.CORRUPT);
+            if (payload == null) return Result.failure(StoreStatus.CORRUPT);
             var archive = SharedClientCodec.decode(Base64.getDecoder().decode(payload));
             return archive.placement().equals(placement) ? new Result(StoreStatus.OK, archive) : Result.failure(StoreStatus.CORRUPT);
         } catch (IOException | IllegalArgumentException | IllegalStateException invalid) { return Result.failure(StoreStatus.CORRUPT); }

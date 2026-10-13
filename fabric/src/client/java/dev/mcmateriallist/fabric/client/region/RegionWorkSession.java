@@ -76,7 +76,7 @@ public final class RegionWorkSession {
     public boolean writable() { return shared.selected() ? shared.writable() : !pending && !shared.loading() && ready() && status == StoreStatus.OK && confirmed != null; }
     public boolean writable(RegionTaskId id) { return writable() && state(id) != null && (shared.selected() || !review(id)); }
     public String feedback() {
-        if (shared.selected()) return shared.feedback();
+        if (shared.loading() || shared.selected()) return shared.feedback();
         if (pending) return text("saving");
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return text("storage", status.name());
         return !ready() ? text("waiting") : status == StoreStatus.OK ? text("local") : text("untracked");
@@ -96,7 +96,7 @@ public final class RegionWorkSession {
         if (!shared.selected() && status == StoreStatus.RECOVERY_REQUIRED) {
             recoverButton = add(3, text(recoveryConfirmed ? "confirm_recovery" : "recover"), (button, mouse) -> {
                 if (!recoveryConfirmed) { recoveryConfirmed = true; screen.addMessage(MessageType.WARNING, text("recovery_warning")); screen.initGui(); }
-                else if (!pending && ready()) {
+                else if (!pending && !shared.loading() && ready()) {
                     recoveryConfirmed = false;
                     await(MCMaterialListClient.work().recover(placement, DatasetKind.REGIONS), this::publish);
                 }
@@ -116,8 +116,8 @@ public final class RegionWorkSession {
         button.setHoverStrings(label); return screen.addButton(button, action);
     }
     private void renderControls() {
-        if (refreshButton != null) refreshButton.setEnabled(shared.selected() ? !shared.pending() && ready() : !pending && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT));
-        if (recoverButton != null) recoverButton.setEnabled(!pending && ready());
+        if (refreshButton != null) refreshButton.setEnabled(!shared.loading() && (shared.selected() ? !shared.pending() && ready() : !pending && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT)));
+        if (recoverButton != null) recoverButton.setEnabled(!pending && !shared.loading() && ready());
     }
     public void footer(GuiContext ctx) {
         if (!sharedRebuild && sharedVersion != shared.version()) {
@@ -138,6 +138,7 @@ public final class RegionWorkSession {
         screen.drawString(ctx, value, x, y, 0xFFFFFFFF);
     }
     public void refresh() {
+        if (shared.loading()) return;
         if (shared.selected()) { shared.refresh(); return; }
         if (pending || !ready()) return;
         await(MCMaterialListClient.work().refreshRegions(capture().snapshot()), result -> publish(result.storage()));

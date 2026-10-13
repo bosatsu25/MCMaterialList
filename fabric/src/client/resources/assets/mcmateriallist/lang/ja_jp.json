@@ -121,6 +121,7 @@
   "mcmateriallist.shared.awaiting_result": "サーバーの確定結果を待っています...",
   "mcmateriallist.shared.checking_source": "設計図ファイルを読み取り確認中...",
   "mcmateriallist.shared.selection_changed": "共有先またはアカウントが変わりました。画面を開き直してください。",
+  "mcmateriallist.shared.state_changed": "確認中に共有作業が変わりました。現在の行を確認して再試行してください。",
   "mcmateriallist.shared.local_storage_blocked": "ローカル作業を確認できないため共有先は変更されません。",
   "mcmateriallist.shared.request_unknown": "確定応答がありません。編集前に再参加してください。",
   "mcmateriallist.shared.no_world": "ワールドを開いてから共有してください。",

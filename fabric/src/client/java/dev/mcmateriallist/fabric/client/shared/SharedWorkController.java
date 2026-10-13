@@ -78,8 +78,18 @@ public final class SharedWorkController {
         if (closed || ref == null || !ref.actor().equals(actor()) || entry.storage != StoreStatus.OK || entry.hidden.contains(ref.scope())) return false;
         var state = SharedClientNetworking.state(); var proof = verified.get(ref.bindingId());
         if (!state.synchronizedState() || !ref.scope().equals(state.scope()) || proof == null || snapshot(entry, backend.kind()) == null) return false;
+        var cache = entry.binding(backend.kind()).cache();
+        if (cache.cursor() != state.cursor() || !cache.snapshot().equals(state.snapshot())) return false;
         var current = backend.capture(false);
         return current.ok() && proof.source().equals(current.source());
+    }
+    boolean cachePending(SharedWorkBackend backend) {
+        var entry = backend.entry(); var ref = reference(entry, backend.kind());
+        if (entry == null || entry.archive == null || ref == null || !ref.actor().equals(actor())
+            || entry.hidden.contains(ref.scope()) || SharedClientService.hasUnknown(entry.archive, ref.actor(), ref.scope())) return false;
+        var state = SharedClientNetworking.state(); var cache = entry.binding(backend.kind()).cache();
+        return state.synchronizedState() && ref.scope().equals(state.scope()) && cache != null
+            && (cache.cursor() != state.cursor() || !cache.snapshot().equals(state.snapshot()));
     }
     boolean writable(SharedWorkBackend backend) {
         var entry = backend.entry(); var snapshot = snapshot(entry, backend.kind());
@@ -92,7 +102,7 @@ public final class SharedWorkController {
         if (entry.loading) return "loading";
         if (entry.storage != StoreStatus.OK && entry.storage != StoreStatus.MISSING) return "storage." + entry.storage.name();
         var ref = reference(entry, backend.kind());
-        if (entry.busy > 0) return "saving";
+        if (entry.busy > 0 || cachePending(backend)) return "saving";
         if (ref == null) return SharedClientNetworking.state().capabilities() == null || entry.reason == null ? availability() : entry.reason;
         if (!ref.actor().equals(actor())) return "account_mismatch";
         if (entry.archive.recoveredJournalUncertain()) return "recovered_uncertain";
@@ -151,7 +161,7 @@ public final class SharedWorkController {
         });
     }
     public void local(SharedWorkBackend backend) {
-        Entry entry = backend.entry(); if (entry == null || entry.loading || entry.busy > 0) return;
+        Entry entry = backend.entry(); if (entry == null || backend.pending()) return;
         var original = reference(entry, backend.kind());
         if (original == null) { setReason(entry, "local_preserved"); return; }
         loadLocal(backend, local -> complete(entry, service.local(entry.placement, backend.kind(), local), result -> {
@@ -175,10 +185,16 @@ public final class SharedWorkController {
     void command(SharedWorkBackend backend, TaskId task, TaskCommand intent) {
         if (!writable(backend) || task == null || backend.state(task) == null) return;
         Entry entry = backend.entry(); var original = reference(entry, backend.kind());
+        var presentation = entry.binding(backend.kind()).cache();
         prepare(backend, false, (capture, digest) -> {
-            var selected = SharedClientNetworking.state().snapshot();
-            if (!Objects.equals(original, reference(entry, backend.kind())) || !synchronizedView(backend) || selected == null
-                || !capture.source().matches(selected.manifest().definition(), digest) || !selected.rows().containsKey(task)) {
+            var current = entry.binding(backend.kind()).cache();
+            if (!Objects.equals(original, reference(entry, backend.kind())) || !synchronizedView(backend) || current == null
+                || current.snapshot().manifest().version() != presentation.snapshot().manifest().version()
+                || !Objects.equals(current.snapshot().rows().get(task), presentation.snapshot().rows().get(task))) {
+                setReason(entry, "state_changed"); return;
+            }
+            var selected = presentation.snapshot();
+            if (!capture.source().matches(selected.manifest().definition(), digest) || !selected.rows().containsKey(task)) {
                 verified.remove(original.bindingId());
                 setReason(entry, "baseline_mismatch"); return;
             }
@@ -199,7 +215,8 @@ public final class SharedWorkController {
                     return persisted.thenApply(SharedClientStore.Result::ok);
                 }).whenComplete((admitted, failure) -> later(() -> {
                     entry.busy--; entry.version++;
-                    setReason(entry, failure == null && Boolean.TRUE.equals(admitted) ? "awaiting_result" : "unknown_outcome");
+                    boolean unknown = entry.archive != null && SharedClientService.hasUnknown(entry.archive, original.actor(), original.scope());
+                    setReason(entry, failure == null && Boolean.TRUE.equals(admitted) ? "awaiting_result" : unknown ? "unknown_outcome" : "request_failed");
                 }));
             } catch (IllegalArgumentException | IllegalStateException unavailable) {
                 entry.busy = Math.max(0, entry.busy - 1); setReason(entry, "request_failed");
@@ -208,7 +225,7 @@ public final class SharedWorkController {
     }
     private boolean requestReady(SharedWorkBackend backend) {
         var entry = backend.entry();
-        if (closed || entry == null || entry.loading || entry.busy > 0 || actor() == null || requests.size() >= REQUESTS
+        if (closed || entry == null || backend.pending() || actor() == null || requests.size() >= REQUESTS
             || requests.values().stream().anyMatch(request -> request.backend().entry() == entry)
             || (entry.storage != StoreStatus.OK && entry.storage != StoreStatus.MISSING)) return false;
         if (SharedClientNetworking.state().capabilities() == null || SharedClientNetworking.state().capabilities().protocolVersion() != 1) { setReason(entry, availability()); return false; }
@@ -365,7 +382,8 @@ public final class SharedWorkController {
     private static void publish(Entry entry, SharedClientStore.Result result, Throwable failure) {
         if (failure != null || result == null) { entry.storage = StoreStatus.IO_FAILURE; entry.reason = "storage.IO_FAILURE"; }
         else {
-            entry.storage = result.status();
+            // Queue/lock refusal is transient; it does not invalidate the last confirmed archive.
+            if (result.status() != StoreStatus.BUSY || entry.archive == null) entry.storage = result.status();
             if (result.ok()) {
                 entry.archive = result.value();
                 entry.hidden.removeIf(scope -> Arrays.stream(DatasetKind.values()).noneMatch(kind -> {

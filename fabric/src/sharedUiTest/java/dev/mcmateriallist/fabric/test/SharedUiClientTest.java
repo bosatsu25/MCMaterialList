@@ -46,7 +46,8 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         Properties properties = new Properties();
         properties.setProperty("level-name", "shared-ui-owned-world"); properties.setProperty("online-mode", "false");
         properties.setProperty("server-ip", "localhost"); properties.setProperty("server-port", Integer.toString(availablePort()));
-        try (var server = context.worldBuilder().createServer(properties); var connection = server.connect()) {
+        try (var server = context.worldBuilder().createServer(properties)) {
+          try (var connection = server.connect()) {
             connection.getClientLevel().waitForChunksRender();
             context.waitFor(client -> SharedClientNetworking.state().capabilities() != null, 600);
             var placement = context.computeOnClient(client -> fixture(client.player.blockPosition().above(8)));
@@ -74,18 +75,33 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             click(context, context.computeOnClient(client -> button(screen, "Share")));
             create(context, "Material project");
             context.waitFor(client -> work.shared().selected() && work.writable(), 600);
-            var materialReference = context.computeOnClient(client -> work.shared().reference());
             context.runOnClient(client -> check(!work.state(glass).done() && work.dataset().equals(originalLocal), "Creation imported local work or changed local identity"));
             back(context); back(context);
             context.waitForScreen(GuiMaterialList.class);
+            if (SharedUiRaceChecks.enabled("publication")) SharedUiRaceChecks.publication(context, server, screen, work, stone);
+            var materialReference = context.computeOnClient(client -> work.shared().reference());
             click(context, context.computeOnClient(client -> rowButton(screen, stone, MaterialDoneButton.class)));
             context.waitFor(client -> work.writable() && work.state(stone).done(), 600);
             context.runOnClient(client -> check(work.progress().equals(new Progress(1, 2, 50)), "Shared native progress did not use project denominator"));
             click(context, context.computeOnClient(client -> rowButton(screen, stone, MaterialHeadButton.class)));
             context.waitForScreen(MaterialDetailScreen.class);
-            action(context, "Claim"); context.waitFor(client -> work.writable() && work.state(stone).assignee() != null, 600);
+            context.runOnClient(client -> check(work.writable()
+                && ((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Claim")).enabled(), "Claim was not enabled on the confirmed detail"));
+            int beforeClaim = SharedUiDelays.submissions;
+            action(context, "Claim");
+            try { context.waitFor(client -> work.writable() && work.state(stone).assignee() != null, 600); }
+            catch (AssertionError failure) {
+                throw new AssertionError("Claim did not settle: " + context.computeOnClient(client ->
+                    "writable=" + work.writable() + ", pending=" + work.pending() + ", feedback=" + work.shared().feedback()
+                    + ", transport=" + SharedClientNetworking.state().status() + ", submissions=" + (SharedUiDelays.submissions - beforeClaim)
+                    + ", admissionDone=" + (SharedUiDelays.submitted != null && SharedUiDelays.submitted.toCompletableFuture().isDone())
+                    + ", assigned=" + (work.state(stone) != null && work.state(stone).assignee() != null)), failure);
+            }
             var detail = context.computeOnClient(client -> (GuiBase) client.gui.screen());
             clickField(context, context.computeOnClient(client -> ((SharedUiAccess.MaterialDetail) detail).note()));
+            int previousNoteLength = context.computeOnClient(client -> work.state(stone).note().length());
+            context.getInput().pressKey(GLFW.GLFW_KEY_END);
+            for (int i = 0; i < previousNoteLength; i++) context.getInput().pressKey(GLFW.GLFW_KEY_BACKSPACE);
             context.getInput().typeChars("Shared fixture note"); action(context, "Save note");
             context.waitFor(client -> work.writable() && work.state(stone).note().equals("Shared fixture note"), 600);
             action(context, "Release"); context.waitFor(client -> work.writable() && work.state(stone).assignee() == null, 600);
@@ -123,6 +139,9 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             var regionScreen = context.computeOnClient(client -> (GuiPlacementConfiguration) client.gui.screen());
             var regions = context.computeOnClient(client -> ((RegionWorkScreen) regionScreen).mcmateriallist$session());
             context.waitFor(client -> !regions.pending());
+            action(context, "Track regions"); context.waitFor(client -> regions.writable(), 600);
+            click(context, context.computeOnClient(client -> regionButton(regionScreen, "Second region", RegionDoneButton.class)));
+            context.waitFor(client -> regions.writable() && regions.state(regions.id("Second region")).done(), 600);
             action(context, "Share"); create(context, "Region project");
             context.waitFor(client -> regions.shared().selected() && regions.writable(), 600);
             var archive = store.load(placementId).value();
@@ -149,11 +168,15 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             context.runOnClient(client -> check(work.progress().equals(new Progress(2, 2, 100)), "Returning material focus changed shared denominator"));
             capture(context, screen, "phase3-shared-material-confirmed");
             observations(context, screen, work, placement);
+            if (SharedUiRaceChecks.enabled("routing")) SharedUiRaceChecks.restoredRouting(context, screen, placement, config, store, placementId);
             geometry(context, screen, work, regionScreen, regions);
             context.setScreen(() -> screen); action(context, "Refresh work"); context.waitFor(client -> work.writable(), 600);
+            if (SharedUiRaceChecks.enabled("admission")) SharedUiRaceChecks.falseAdmission(context, work, store, config, placementId);
             viewerAndUnavailable(context, server, screen, work, placement, store, placementId);
             check(Arrays.equals(localBytes, Files.readAllBytes(localFile)), "Shared flow rewrote original local file bytes");
             check(Arrays.equals(schematic, Files.readAllBytes(placement.getSchematicFile())), "Shared flow changed source schematic bytes");
+          }
+          if (SharedUiRaceChecks.enabled("admission")) SharedUiRaceChecks.closedAdmission(context, server);
         }
         org.slf4j.LoggerFactory.getLogger("mcmateriallist-shared-ui-test").info("Shared native UI all assertions PASS");
       } catch (Exception failure) { throw new AssertionError("Shared native UI fixture failed", failure); }
@@ -313,17 +336,17 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             (field.getY() + 8.0) * client.getWindow().getScreenHeight() / client.getWindow().getGuiScaledHeight()});
         context.getInput().setCursorPos(cursor[0], cursor[1]); context.waitTick(); context.getInput().pressMouse(GLFW.GLFW_MOUSE_BUTTON_LEFT);
     }
-    private static void action(ClientGameTestContext context, String label) {
+    static void action(ClientGameTestContext context, String label) {
         context.waitTick(); click(context, context.computeOnClient(client -> button((GuiBase) client.gui.screen(), label)));
     }
-    private static void back(ClientGameTestContext context) { action(context, "Back"); context.waitTick(); }
-    private static void create(ClientGameTestContext context, String name) {
+    static void back(ClientGameTestContext context) { action(context, "Back"); context.waitTick(); }
+    static void create(ClientGameTestContext context, String name) {
         action(context, "New project..."); context.waitForScreen(SharedInputScreen.class); input(context, name); action(context, "Create empty work");
     }
     private static void input(ClientGameTestContext context, String text) {
         clickField(context, context.computeOnClient(client -> ((SharedUiAccess.Input) client.gui.screen()).input())); context.getInput().typeChars(text);
     }
-    private static ButtonBase rowButton(GuiMaterialList screen, MaterialTaskId id, Class<? extends ButtonBase> type) {
+    static ButtonBase rowButton(GuiMaterialList screen, MaterialTaskId id, Class<? extends ButtonBase> type) {
         var row = ((SharedUiAccess.Rows) ((SharedUiAccess.ListScreen) screen).list()).rows().stream()
             .filter(candidate -> candidate.getEntry() instanceof MaterialListEntry entry
                 && net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(entry.getStack().getItem()).toString().equals(id.registryId()))
@@ -339,7 +362,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
     private static int availablePort() throws java.io.IOException {
         try (var socket = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) { return socket.getLocalPort(); }
     }
-    private static SchematicPlacement fixture(BlockPos origin) throws java.io.IOException {
+    static SchematicPlacement fixture(BlockPos origin) throws java.io.IOException {
         Path base = DataManager.getSchematicsBaseDirectory(); Files.createDirectories(base);
         Path directory = Files.createTempDirectory(base, "shared-ui-fixture-");
         var selection = new AreaSelection();
@@ -354,12 +377,12 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             "Synthetic shared placement", true, true);
         DataManager.getSchematicPlacementManager().addSchematicPlacement(placement, false); return placement;
     }
-    private static ButtonBase button(GuiBase screen, String label) {
+    static ButtonBase button(GuiBase screen, String label) {
         return ((GuiButtonsAccess) screen).mcmateriallist$buttons().stream()
             .filter(button -> label.equals(ChatFormatting.stripFormatting(((SharedUiAccess.Button) button).label())))
             .findFirst().orElseThrow(() -> new AssertionError("Missing explicit native action: " + label));
     }
-    private static void click(ClientGameTestContext context, WidgetBase widget) {
+    static void click(ClientGameTestContext context, WidgetBase widget) {
         double[] cursor = context.computeOnClient(client -> new double[]{
             (widget.getX() + widget.getWidth() / 2.0) * client.getWindow().getScreenWidth() / client.getWindow().getGuiScaledWidth(),
             (widget.getY() + widget.getHeight() / 2.0) * client.getWindow().getScreenHeight() / client.getWindow().getGuiScaledHeight()});

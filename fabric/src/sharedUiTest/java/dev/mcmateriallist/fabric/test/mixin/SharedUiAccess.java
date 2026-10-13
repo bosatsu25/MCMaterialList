@@ -12,6 +12,18 @@ import fi.dy.masa.malilib.gui.GuiTextFieldMultiLine;
 /** Native widget inspection only; actions still use actual mouse/key input. */
 public final class SharedUiAccess {
     private SharedUiAccess() {}
+    @Mixin(value = dev.mcmateriallist.fabric.client.MCMaterialListClient.class, remap = false)
+    public interface Client {
+        @Accessor("shared") static void shared(dev.mcmateriallist.fabric.client.shared.SharedWorkController controller) { throw new AssertionError("Test accessor not applied"); }
+    }
+    @Mixin(value = dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.class, remap = false)
+    public interface Backend {
+        @Accessor("controller") dev.mcmateriallist.fabric.client.shared.SharedWorkController controller();
+    }
+    @Mixin(value = dev.mcmateriallist.fabric.client.shared.SharedWorkController.class, remap = false)
+    public interface Controller {
+        @Accessor("closed") boolean closed();
+    }
     @Mixin(value = ButtonBase.class, remap = false)
     public interface Button {
         @Accessor("displayString") String label();

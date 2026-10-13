@@ -238,6 +238,7 @@ loom.runs {
         inherit clientGameTest
         source sourceSets.sharedUiTest
         vmArg '-Dfabric.client.gametest.modid=mcmateriallist-shared-ui-test'
+        vmArg "-Dmcmateriallist.sharedUiRegression=${providers.gradleProperty('sharedUiRegression').getOrElse('all')}"
         runDir 'build/run/sharedUiTest'
     }
 }

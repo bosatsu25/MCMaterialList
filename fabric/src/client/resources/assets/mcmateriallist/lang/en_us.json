@@ -121,6 +121,7 @@
   "mcmateriallist.shared.awaiting_result": "Waiting for authoritative result...",
   "mcmateriallist.shared.checking_source": "Checking schematic source read-only...",
   "mcmateriallist.shared.selection_changed": "Selection/account changed. Reopen this form.",
+  "mcmateriallist.shared.state_changed": "Shared work changed while checking. Review the current row and retry.",
   "mcmateriallist.shared.local_storage_blocked": "Local work could not be verified. Selection unchanged.",
   "mcmateriallist.shared.request_unknown": "No confirmed response. Join again before editing.",
   "mcmateriallist.shared.no_world": "Open a world to share work.",
