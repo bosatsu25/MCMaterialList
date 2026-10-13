@@ -1,6 +1,7 @@
 package dev.mcmateriallist.fabric.client.region;
 
 import dev.mcmateriallist.core.work.RegionTaskId;
+import dev.mcmateriallist.core.work.TaskCommand;
 import fi.dy.masa.malilib.gui.button.ButtonGeneric;
 import fi.dy.masa.malilib.render.GuiContext;
 
@@ -18,9 +19,10 @@ public final class RegionDoneButton extends ButtonGeneric {
         if (state != null) RegionHeadButton.mark(ctx, getX() + 3, getY() + 3, !state.done());
     }
     private boolean allowed() {
+        var row = session.state(id);
         boolean allowed = session.writable(id);
-        setHoverStrings(allowed ? session.feedback() : session.shared().selected()
-            ? dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("task_permission_required") : session.feedback());
+        setHoverStrings(!allowed && session.shared().selected()
+            ? session.shared().taskFeedback(id, row == null ? null : new TaskCommand.SetDone(!row.done())) : session.feedback());
         return allowed;
     }
 }

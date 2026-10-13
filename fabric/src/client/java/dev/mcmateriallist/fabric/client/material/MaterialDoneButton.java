@@ -21,8 +21,8 @@ public final class MaterialDoneButton extends ButtonGeneric {
     private boolean allowed() {
         var row = session.state(id);
         boolean allowed = row != null && session.allowed(id, new TaskCommand.SetDone(!row.done()));
-        setHoverStrings(allowed ? session.feedback() : session.shared().selected()
-            ? dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("task_permission_required") : session.feedback());
+        setHoverStrings(!allowed && session.shared().selected()
+            ? session.shared().taskFeedback(id, row == null ? null : new TaskCommand.SetDone(!row.done())) : session.feedback());
         return allowed;
     }
 }

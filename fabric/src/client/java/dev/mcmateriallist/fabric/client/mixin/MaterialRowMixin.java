@@ -3,7 +3,6 @@ package dev.mcmateriallist.fabric.client.mixin;
 import dev.mcmateriallist.core.ui.MaterialRowLayout;
 import dev.mcmateriallist.core.work.*;
 import dev.mcmateriallist.fabric.client.material.*;
-import dev.mcmateriallist.fabric.client.shared.SharedWorkBackend;
 import dev.mcmateriallist.fabric.client.work.WorkNoticeButton;
 import fi.dy.masa.litematica.gui.widgets.WidgetMaterialListEntry;
 import fi.dy.masa.litematica.gui.widgets.WidgetListMaterialList;
@@ -83,7 +82,9 @@ public abstract class MaterialRowMixin extends WidgetListEntrySortable<MaterialL
         else if (mcmateriallist$done.isMouseOver(mouseX, mouseY)) {
             boolean permitted = state != null && mcmateriallist$work.allowed(mcmateriallist$id, new TaskCommand.SetDone(!state.done()));
             text = permitted ? MaterialWorkSession.text(state.done() ? "undo" : "done")
-                : mcmateriallist$work.shared().selected() ? SharedWorkBackend.text("task_permission_required") : mcmateriallist$work.feedback();
+                : mcmateriallist$work.shared().selected()
+                    ? mcmateriallist$work.shared().taskFeedback(mcmateriallist$id, state == null ? null : new TaskCommand.SetDone(!state.done()))
+                    : mcmateriallist$work.feedback();
         }
         else if (mcmateriallist$notice.isMouseOver(mouseX, mouseY)) text = MaterialPresentation.info(state) + " | " + mcmateriallist$work.feedback() + (mcmateriallist$work.changed(mcmateriallist$id) ? " | " + MaterialWorkSession.text("definition_changed") : "");
         if (text != null) { ctx.renderTooltip(textRenderer, Component.literal(text), mouseX, mouseY); callback.cancel(); }

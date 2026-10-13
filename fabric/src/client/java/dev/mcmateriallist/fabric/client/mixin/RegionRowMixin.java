@@ -3,7 +3,6 @@ package dev.mcmateriallist.fabric.client.mixin;
 import dev.mcmateriallist.core.work.*;
 import dev.mcmateriallist.fabric.client.material.MaterialPresentation;
 import dev.mcmateriallist.fabric.client.region.*;
-import dev.mcmateriallist.fabric.client.shared.SharedWorkBackend;
 import dev.mcmateriallist.fabric.client.work.WorkNoticeButton;
 import fi.dy.masa.litematica.gui.widgets.WidgetPlacementSubRegion;
 import fi.dy.masa.litematica.gui.widgets.WidgetListPlacementSubRegions;
@@ -80,8 +79,9 @@ public abstract class RegionRowMixin extends WidgetListEntryBase<SubRegionPlacem
             var state = mcmateriallist$work.state(mcmateriallist$id);
             boolean permitted = state != null && mcmateriallist$work.allowed(mcmateriallist$id, new TaskCommand.SetDone(!state.done()));
             text = permitted ? RegionWorkSession.text(state.done() ? "undo" : "done")
-                : mcmateriallist$work.shared().selected() ? SharedWorkBackend.text("task_permission_required")
-                : mcmateriallist$work.review(mcmateriallist$id) ? RegionWorkSession.text("definition_changed") : mcmateriallist$work.feedback();
+                : mcmateriallist$work.shared().selected()
+                    ? mcmateriallist$work.shared().taskFeedback(mcmateriallist$id, state == null ? null : new TaskCommand.SetDone(!state.done()))
+                    : mcmateriallist$work.review(mcmateriallist$id) ? RegionWorkSession.text("definition_changed") : mcmateriallist$work.feedback();
         }
         else if (mouseX >= x + 40 && mouseX < buttonsStartX - 35 && mouseY >= y && mouseY < y + 22) text = placement.getName();
         if (text != null) { ctx.renderTooltip(textRenderer, Component.literal(text), mouseX, mouseY); callback.cancel(); }

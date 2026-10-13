@@ -38,6 +38,14 @@ public final class SharedWorkBackend {
     public long version() { return entry == null ? 0 : entry.version; }
     public boolean writable() { return controller.writable(this); }
     public String feedback() { return text(controller.reason(this)); }
+    public String taskFeedback(TaskId task, TaskCommand intent) {
+        String reason = controller.reason(this);
+        var snapshot = snapshot();
+        if ((reason.equals("shared") || reason.equals("viewer")) && snapshot != null
+                && task != null && intent != null && snapshot.rows().containsKey(task) && !allowed(task, intent))
+            return text("task_permission_required");
+        return text(reason);
+    }
     public ProjectSnapshot snapshot() { return controller.snapshot(entry, kind); }
     public TaskState state(TaskId id) { var snapshot = snapshot(); return snapshot == null || id == null ? null : snapshot.rows().get(id); }
     public boolean review(TaskId id) { var snapshot = snapshot(); return snapshot != null && id != null && snapshot.needsReconfirmation().contains(id); }

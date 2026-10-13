@@ -59,7 +59,8 @@ public final class MaterialDetailScreen extends GuiBase {
         if (assign != null) {
             boolean canAssign = state != null && session.shared().allowed(id, new TaskCommand.Assign(null));
             assign.setEnabled(canAssign);
-            assign.setHoverStrings(canAssign ? session.feedback() : dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("task_permission_required"));
+            assign.setHoverStrings(!canAssign && sameContext
+                ? session.shared().taskFeedback(id, new TaskCommand.Assign(null)) : session.feedback());
         }
         var actor = mc.player == null ? null : mc.player.getUUID();
         for (int i = 0; i < actions.size(); i++) {
@@ -68,8 +69,10 @@ public final class MaterialDetailScreen extends GuiBase {
             TaskCommand intent = i == 0 ? new TaskCommand.Claim() : i == 1 ? new TaskCommand.Release() : new TaskCommand.SetNote("");
             boolean permitted = session.shared().selected() ? session.allowed(id, intent) : session.writable() && allowed;
             actions.get(i).setEnabled(sameContext && permitted);
-            actions.get(i).setHoverStrings(permitted ? session.feedback() : session.shared().selected()
-                ? dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("task_permission_required") : MaterialWorkSession.text("ownership_required"));
+            String hover = session.feedback();
+            if (!permitted && sameContext) hover = session.shared().selected()
+                ? session.shared().taskFeedback(id, intent) : MaterialWorkSession.text("ownership_required");
+            actions.get(i).setHoverStrings(hover);
         }
         drawString(ctx, MaterialPresentation.clamp(MaterialWorkSession.text("assignee", MaterialWorkSession.playerName(state == null ? null : state.assignee())), getScreenWidth() - 24), 12, 30, 0xFFFFFFFF);
         drawString(ctx, MaterialPresentation.clamp(state != null && state.done() ? MaterialWorkSession.text("completed", MaterialWorkSession.playerName(state.completedBy()), state.completedAt().toString()) : MaterialWorkSession.text("incomplete"), getScreenWidth() - 24), 12, 46, 0xFFFFFFFF);
