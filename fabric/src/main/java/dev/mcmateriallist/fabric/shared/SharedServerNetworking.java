@@ -135,6 +135,8 @@ public final class SharedServerNetworking {
                     else completion(new Failure(token, SharedControlPayload.Reason.UNAVAILABLE));
                     requests.release(1);
                 });
+            } else if (message instanceof SharedMessage.SetMembership request && request.scope().equals(subscriptions.get(token))) {
+                snapshot(token, request.requestId(), 0, false, service.setMembership(actor, request.scope(), request.expectedProjectRevision(), request.target(), request.role()));
             } else if (message instanceof SharedMessage.SetViewer request && request.scope().equals(subscriptions.get(token))) {
                 snapshot(token, request.requestId(), 0, false, service.setViewer(actor, request.scope(), request.expectedProjectRevision(), request.target(), request.granted()));
             } else if (message instanceof SharedMessage.UpdateManifest request && request.scope().equals(subscriptions.get(token))) {

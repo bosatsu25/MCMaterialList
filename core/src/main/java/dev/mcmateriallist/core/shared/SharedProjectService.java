@@ -64,7 +64,7 @@ public final class SharedProjectService implements AutoCloseable {
             try {
                 SharedManifest manifest = SharedManifest.initial(definition); Map<TaskId, TaskState> rows = new HashMap<>();
                 manifest.taskIds().forEach(id -> rows.put(id, TaskState.empty(id)));
-                snapshot = new ProjectSnapshot(ProjectScope.create(world), name, actor, Set.of(), 0, manifest, rows, Set.of());
+                snapshot = new ProjectSnapshot(ProjectScope.create(world), name, actor, Map.of(actor, ProjectRole.ADMINISTRATOR), 0, manifest, rows, Set.of());
             } catch (IllegalArgumentException | NullPointerException exception) { return Reply.of(Status.INVALID_INPUT, null); }
             ProjectArchive archive = new ProjectArchive(0, snapshot, List.of(), List.of());
             return save(archive, -1) ? Reply.of(Status.OK, snapshot) : Reply.of(Status.SAVE_FAILED, null);
@@ -91,22 +91,27 @@ public final class SharedProjectService implements AutoCloseable {
             512 + (command.intent() instanceof SharedCommand.SetNote note ? note.note().getBytes(java.nio.charset.StandardCharsets.UTF_8).length : 0));
     }
     public CompletionStage<Reply<ProjectSnapshot>> setViewer(UUID actor, ProjectScope scope, long expectedRevision, UUID target, boolean grant) {
+        return setMembership(actor, scope, expectedRevision, target, grant ? ProjectRole.VIEWER : null);
+    }
+    public CompletionStage<Reply<ProjectSnapshot>> setMembership(UUID actor, ProjectScope scope, long expectedRevision, UUID target, ProjectRole role) {
         return submit(() -> {
             Current current = current(scope);
             if (current.archive() == null) return Reply.of(current.status(), null);
             ProjectArchive archive = current.archive(); ProjectSnapshot before = archive.snapshot();
-            if (!before.canWrite(actor)) return Reply.of(Status.DENIED, null);
+            if (!before.canAdminister(actor)) return Reply.of(Status.DENIED, null);
+            if (target == null || expectedRevision < 0) return Reply.of(Status.INVALID_INPUT, null);
             if (before.projectRevision() != expectedRevision) return Reply.of(Status.CONFLICT, null);
-            if (target == null || before.creator().equals(target)) return Reply.of(Status.INVALID_INPUT, null);
-            Set<UUID> viewers = new HashSet<>(before.viewers()); boolean changed = grant ? viewers.add(target) : viewers.remove(target);
-            if (!changed) return Reply.of(Status.OK, before);
-            if (viewers.size() + 1 > SharedLimits.PARTICIPANTS || exhausted(archive)) return Reply.of(Status.CAPACITY, null);
-            ProjectSnapshot after = new ProjectSnapshot(scope, before.name(), before.creator(), viewers, before.projectRevision() + 1,
+            if (before.role(target) == role) return Reply.of(Status.OK, before);
+            Map<UUID, ProjectRole> members = new HashMap<>(before.members());
+            if (role == null) members.remove(target); else members.put(target, role);
+            if (!members.containsValue(ProjectRole.ADMINISTRATOR)) return Reply.of(Status.INVALID_INPUT, null);
+            if (members.size() > SharedLimits.PARTICIPANTS || exhausted(archive)) return Reply.of(Status.CAPACITY, null);
+            ProjectSnapshot after = new ProjectSnapshot(scope, before.name(), before.creator(), members, before.projectRevision() + 1,
                 before.manifest(), before.rows(), before.needsReconfirmation());
             if (!save(new ProjectArchive(archive.generation() + 1, after, retained(archive), archive.retired()), archive.generation()))
                 return Reply.of(Status.SAVE_FAILED, null);
             List<Event> events = new ArrayList<>(); events.add(new ProjectInvalidated(scope, after.projectRevision(), after.manifest().version()));
-            if (!grant) events.add(new AccessRevoked(scope, target));
+            if (role == null) events.add(new AccessRevoked(scope, target));
             return new Reply<>(Status.OK, after, events);
         }, Reply.of(Status.CAPACITY, null), Reply.of(Status.CLOSED, null));
     }
@@ -116,7 +121,8 @@ public final class SharedProjectService implements AutoCloseable {
             Current current = current(scope);
             if (current.archive() == null) return Reply.of(current.status(), null);
             ProjectArchive archive = current.archive(); ProjectSnapshot before = archive.snapshot();
-            if (!before.canWrite(actor)) return Reply.of(Status.DENIED, null);
+            if (!before.canAdminister(actor)) return Reply.of(Status.DENIED, null);
+            if (expectedRevision < 0 || expectedManifest < 0) return Reply.of(Status.INVALID_INPUT, null);
             if (before.projectRevision() != expectedRevision || before.manifest().version() != expectedManifest) return Reply.of(Status.CONFLICT, null);
             if (definition == null) return Reply.of(Status.INVALID_INPUT, null);
             if (before.manifest().definition().equals(definition)) return Reply.of(Status.OK, before);
@@ -144,7 +150,7 @@ public final class SharedProjectService implements AutoCloseable {
                     row.taskId() instanceof MaterialTaskId material ? before.manifest().definition().materials().get(material) : null));
             }
             if (retired.size() > SharedLimits.RETIRED_ROWS) return Reply.of(Status.CAPACITY, null);
-            ProjectSnapshot after = new ProjectSnapshot(scope, before.name(), before.creator(), before.viewers(), before.projectRevision() + 1, manifest, rows, recheck);
+            ProjectSnapshot after = new ProjectSnapshot(scope, before.name(), before.creator(), before.members(), before.projectRevision() + 1, manifest, rows, recheck);
             if (!save(new ProjectArchive(archive.generation() + 1, after, retained(archive), retired), archive.generation())) return Reply.of(Status.SAVE_FAILED, null);
             return new Reply<>(Status.OK, after, List.of(new ProjectInvalidated(scope, after.projectRevision(), manifest.version())));
         }, Reply.of(Status.CAPACITY, null), Reply.of(Status.CLOSED, null), definitionBudget(definition));
@@ -165,16 +171,20 @@ public final class SharedProjectService implements AutoCloseable {
         if (current.archive() == null) return rejected(command, current.status());
         ProjectArchive archive = current.archive(); ProjectSnapshot before = archive.snapshot();
         // Authority precedes even durable replay, so revoked/read-only actors receive no historical rows.
-        if (!before.canWrite(actor)) return rejected(command, Status.DENIED);
+        if (!before.canWrite(actor) || !before.canAdminister(actor) && ProjectPermissions.privileged(command.intent()))
+            return rejected(command, Status.DENIED);
         List<ProjectArchive.Operation> operations = retained(archive);
-        for (ProjectArchive.Operation op : operations) if (op.actor().equals(actor) && op.command().operationId().equals(command.operationId()))
+        for (ProjectArchive.Operation op : operations) if (op.actor().equals(actor) && op.command().operationId().equals(command.operationId())) {
+            if (!before.canAdminister(actor) && !op.memberAllowed()) return rejected(command, Status.DENIED);
             return op.command().equals(command) ? new Outcome(op.result(), List.of()) : rejected(command, Status.INVALID_INPUT);
-        if (exhausted(archive)) return rejected(command, Status.CAPACITY);
+        }
         TaskState oldRow = before.rows().get(command.taskId()); TaskState nextRow = oldRow;
+        if (oldRow == null || command.intent() instanceof SharedCommand.Assign assign && !before.canRead(assign.target()))
+            return rejected(command, Status.INVALID_INPUT);
+        if (!ProjectPermissions.allows(before, actor, oldRow, command.intent())) return rejected(command, Status.DENIED);
+        if (exhausted(archive)) return rejected(command, Status.CAPACITY);
         Status status = Status.OK;
-        if (oldRow == null) status = Status.INVALID_INPUT;
-        else if (command.expectedManifestVersion() != before.manifest().version() || command.expectedRowVersion() != oldRow.rowVersion()) status = Status.CONFLICT;
-        else if (command.intent() instanceof SharedCommand.Assign assign && !before.canRead(assign.target())) status = Status.INVALID_INPUT;
+        if (command.expectedManifestVersion() != before.manifest().version() || command.expectedRowVersion() != oldRow.rowVersion()) status = Status.CONFLICT;
         else {
             TransitionResult transition = transition(oldRow, command.intent(), actor);
             if (transition instanceof TransitionResult.Rejected) status = Status.CONFLICT;
@@ -188,11 +198,11 @@ public final class SharedProjectService implements AutoCloseable {
         boolean changed = !Objects.equals(oldRow, nextRow); ProjectSnapshot after = before;
         if (changed) {
             Map<TaskId, TaskState> rows = new HashMap<>(before.rows()); rows.put(command.taskId(), nextRow);
-            after = new ProjectSnapshot(before.scope(), before.name(), before.creator(), before.viewers(), before.projectRevision() + 1,
+            after = new ProjectSnapshot(before.scope(), before.name(), before.creator(), before.members(), before.projectRevision() + 1,
                 before.manifest(), rows, recheck);
         }
         CommandResult result = new CommandResult(command.scope(), command.operationId(), status, after.projectRevision(), nextRow);
-        operations.add(new ProjectArchive.Operation(actor, command, result, clock.instant()));
+        operations.add(new ProjectArchive.Operation(actor, command, result, clock.instant(), ProjectPermissions.memberAllows(actor, oldRow, command.intent())));
         while (operations.size() > SharedLimits.OPERATIONS) operations.removeFirst();
         if (!save(new ProjectArchive(archive.generation() + 1, after, operations, archive.retired()), archive.generation())) return rejected(command, Status.SAVE_FAILED);
         return new Outcome(result, changed ? List.of(new ProjectDelta(command.scope(), after.projectRevision(), after.manifest().version(), nextRow,

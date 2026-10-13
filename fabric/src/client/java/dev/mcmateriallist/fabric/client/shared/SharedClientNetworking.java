@@ -83,7 +83,9 @@ public final class SharedClientNetworking {
                 if (!encoding.reserve(bytes)) { failed.set(true); return; }
                 ProjectScope scope = message instanceof SharedMessage.TaskCommand command ? command.command().scope() : null;
                 try {
-                    byte[] bytesToSend = SharedProtocol.encode(message);
+                    byte[] bytesToSend = message instanceof SharedMessage.Hello hello
+                        && hello.protocolVersion() == SharedProtocol.VERSION
+                        ? SharedProtocol.encodeNegotiationHello() : SharedProtocol.encode(message);
                     if (!open || preparedEpoch != epoch.get()) return;
                     if (!outgoing.offer(token, scope, bytesToSend, now(), generation) && preparedEpoch == epoch.get()) failed.set(true);
                 }
@@ -159,8 +161,12 @@ public final class SharedClientNetworking {
     }
     private static UUID request(Kind kind, ProjectScope scope, java.util.function.Function<UUID, SharedMessage> message) {
         Connection current = current();
-        if (state.capabilities() == null || state.capabilities().protocolVersion() != 1 || current.requests.size() >= LIMIT)
+        if (state.capabilities() == null || state.capabilities().protocolVersion() != SharedProtocol.VERSION || current.requests.size() >= LIMIT)
             throw new IllegalStateException("Shared request unavailable");
+        if (kind == Kind.ADMIN && (scope == null || !scope.equals(state.scope()) || !state.synchronizedState()
+                || state.snapshot() == null || Minecraft.getInstance().player == null
+                || !state.snapshot().canAdminister(Minecraft.getInstance().player.getUUID())))
+            throw new IllegalStateException("Shared administration unavailable");
         if (kind == Kind.JOIN || kind == Kind.CREATE) {
             current.clearTransfers(); current.requests.clear(); replies.clear();
             if (scope != null) state.joining(scope); else state.failed();
@@ -202,8 +208,11 @@ public final class SharedClientNetworking {
             && pending.context().actor().equals(actor) && Objects.equals(pending.context().scope(), state.scope()))
             .map(Pending::command).toList();
     }
-    public static UUID setViewer(ProjectScope scope, long revision, UUID target, boolean granted) { return request(Kind.ADMIN, scope,
-        id -> new SharedMessage.SetViewer(id, scope, revision, target, granted)); }
+    public static UUID setMembership(ProjectScope scope, long revision, UUID target, ProjectRole role) { return request(Kind.ADMIN, scope,
+        id -> new SharedMessage.SetMembership(id, scope, revision, target, role)); }
+    public static UUID setViewer(ProjectScope scope, long revision, UUID target, boolean granted) {
+        return setMembership(scope, revision, target, granted ? ProjectRole.VIEWER : null);
+    }
     public static UUID updateManifest(ProjectScope scope, long revision, long manifest, SharedManifest.Definition definition) { return request(Kind.ADMIN, scope,
         id -> new SharedMessage.UpdateManifest(id, scope, revision, manifest, definition)); }
     public record AdmissionContext(UUID actor, UUID connectionId, ProjectScope scope) {}
@@ -241,7 +250,7 @@ public final class SharedClientNetworking {
     private static boolean canWrite(SharedCommand command) {
         ProjectSnapshot snapshot = state.snapshot();
         return Minecraft.getInstance().player != null && state.synchronizedState() && snapshot != null && snapshot.scope().equals(command.scope())
-            && snapshot.canWrite(Minecraft.getInstance().player.getUUID()) && snapshot.rows().containsKey(command.taskId())
+            && ProjectPermissions.allows(snapshot, Minecraft.getInstance().player.getUUID(), snapshot.rows().get(command.taskId()), command.intent())
             && snapshot.rows().get(command.taskId()).rowVersion() == command.expectedRowVersion()
             && snapshot.manifest().version() == command.expectedManifestVersion();
     }

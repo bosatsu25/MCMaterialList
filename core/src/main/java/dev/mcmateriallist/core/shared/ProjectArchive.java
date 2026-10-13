@@ -6,11 +6,16 @@ import java.util.*;
 
 /** One atomic persistence unit; operation results are never written separately from rows. */
 public record ProjectArchive(long generation, ProjectSnapshot snapshot, List<Operation> operations, List<Retired> retired) {
-    public record Operation(UUID actor, SharedCommand command, SharedEvents.CommandResult result, Instant recordedAt) {
+    public record Operation(UUID actor, SharedCommand command, SharedEvents.CommandResult result, Instant recordedAt, boolean memberAllowed) {
         public Operation { Objects.requireNonNull(actor); Objects.requireNonNull(command); Objects.requireNonNull(result); Objects.requireNonNull(recordedAt);
             if (!command.scope().equals(result.scope()) || !command.operationId().equals(result.operationId())
                 || (result.row() != null && !command.taskId().equals(result.row().taskId())))
-                throw new IllegalArgumentException("Inconsistent operation"); }
+                throw new IllegalArgumentException("Inconsistent operation");
+            if (memberAllowed && ProjectPermissions.privileged(command.intent())) throw new IllegalArgumentException("Invalid replay permission"); }
+        /** Legacy archives have no original Member authorization evidence. */
+        public Operation(UUID actor, SharedCommand command, SharedEvents.CommandResult result, Instant recordedAt) {
+            this(actor, command, result, recordedAt, false);
+        }
     }
     public record Retired(long manifestVersion, TaskState row, RegionDescriptor region, Long materialCount) {
         public Retired { Objects.requireNonNull(row);

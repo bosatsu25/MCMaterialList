@@ -9,6 +9,37 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SharedProtocolTest {
+    private static byte[] legacyHello(int innerVersion) {
+        return ByteBuffer.allocate(9).putInt(1).put((byte) 0).putInt(innerVersion).array();
+    }
+    private static byte[] legacyFrame(byte[] message) {
+        return ByteBuffer.allocate(36 + message.length).putInt(1).putLong(0).putLong(17)
+            .putInt(0).putInt(1).putInt(message.length).putInt(message.length).put(message).array();
+    }
+    @Test void legacyNegotiationAcceptsOnlyExactSingleFrameHello() {
+        byte[] oldHello = legacyHello(1), newHello = legacyHello(SharedProtocol.VERSION);
+        assertArrayEquals(newHello, SharedProtocol.encodeNegotiationHello());
+        assertEquals(new SharedMessage.Hello(1), SharedProtocol.decode(oldHello));
+        assertEquals(new SharedMessage.Hello(SharedProtocol.VERSION), SharedProtocol.decode(newHello));
+        var fragment = SharedTransfers.decode(legacyFrame(oldHello));
+        assertEquals(1, fragment.count());
+        assertArrayEquals(oldHello, new SharedTransfers().accept(fragment, 1).orElseThrow());
+        assertArrayEquals(newHello, new SharedTransfers().accept(SharedTransfers.decode(legacyFrame(newHello)), 1).orElseThrow());
+        var outbound = SharedTransfers.split(new UUID(0, 17), newHello).getFirst();
+        assertArrayEquals(legacyFrame(newHello), SharedTransfers.encodeNegotiationFrame(outbound));
+        assertEquals(2, ByteBuffer.wrap(SharedTransfers.encode(outbound)).getInt());
+        assertThrows(IllegalArgumentException.class, () -> SharedTransfers.decode(SharedTransfers.encode(outbound)));
+        byte[] oldApp = legacyHello(1); oldApp[4] = 2;
+        assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(oldApp));
+        assertThrows(IllegalArgumentException.class, () -> SharedTransfers.decode(legacyFrame(oldApp)));
+        assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(Arrays.copyOf(oldHello, 10)));
+        assertThrows(IllegalArgumentException.class, () -> SharedTransfers.decode(legacyFrame(Arrays.copyOf(oldHello, 10))));
+        byte[] wrongFrame = legacyFrame(oldHello); ByteBuffer.wrap(wrongFrame).putInt(24, 2);
+        assertThrows(IllegalArgumentException.class, () -> SharedTransfers.decode(wrongFrame));
+        byte[] future = legacyFrame(oldHello); ByteBuffer.wrap(future).putInt(0, 3);
+        assertThrows(IllegalArgumentException.class, () -> SharedTransfers.decode(future));
+        assertEquals(new SharedMessage.Hello(SharedProtocol.VERSION), SharedProtocol.decode(SharedProtocol.encode(new SharedMessage.Hello(SharedProtocol.VERSION))));
+    }
     private static ProjectSnapshot snapshot(SharedManifest.Definition definition) {
         SharedManifest manifest = SharedManifest.initial(definition); Map<TaskId, TaskState> rows = new HashMap<>();
         manifest.taskIds().forEach(id -> rows.put(id, TaskState.empty(id)));
@@ -37,9 +68,9 @@ class SharedProtocolTest {
         }
     }
     @Test void decoderRejectsOversizedCountsLengthsMalformedUtf8AndUnknownVersionsBeforeAllocation() {
-        byte[] badCount = ByteBuffer.allocate(26).putInt(1).put((byte) 3).putLong(0).putLong(0).put((byte) 0).putInt(Integer.MAX_VALUE).array();
+        byte[] badCount = ByteBuffer.allocate(26).putInt(SharedProtocol.VERSION).put((byte) 3).putLong(0).putLong(0).put((byte) 0).putInt(Integer.MAX_VALUE).array();
         assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(badCount));
-        byte[] invalidVersion = SharedProtocol.encode(new SharedMessage.Hello(1)); invalidVersion[3] = 2;
+        byte[] invalidVersion = SharedProtocol.encode(new SharedMessage.Hello(1)); invalidVersion[3] = (byte) (SharedProtocol.VERSION + 1);
         assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(invalidVersion));
         byte[] invalidTag = SharedProtocol.encode(new SharedMessage.Hello(1)); invalidTag[4] = (byte) 255;
         assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(invalidTag));
@@ -87,4 +118,30 @@ class SharedProtocolTest {
         assertThrows(IllegalArgumentException.class, () -> transfers.accept(SharedTransfers.split(UUID.randomUUID(), input).getFirst(), 30_104));
         assertThrows(IllegalArgumentException.class, () -> transfers.expire(0)); assertEquals(0, transfers.incompleteCount());
     }
+
+    @Test void membershipWirePreservesAllRolesAndRejectsMalformedEntries() {
+        var initial = snapshot(SharedAuthorityTest.definition());
+        UUID member = new UUID(0, 201), viewer = new UUID(0, 202);
+        var s = new ProjectSnapshot(initial.scope(), "roles", initial.creator(),
+            Map.of(initial.creator(), ProjectRole.ADMINISTRATOR, member, ProjectRole.MEMBER, viewer, ProjectRole.VIEWER),
+            initial.projectRevision(), initial.manifest(), initial.rows(), initial.needsReconfirmation());
+        UUID request = new UUID(0, 203);
+        byte[] snapshot = SharedProtocol.encode(new SharedMessage.Snapshot(request, SharedEvents.Status.OK, s));
+        assertEquals(s, ((SharedMessage.Snapshot) SharedProtocol.decode(snapshot)).snapshot());
+        int countAt = 4 + 1 + 16 + 1 + 64 + 4 + 5 + 16;
+        byte[] duplicate = snapshot.clone(); System.arraycopy(duplicate, countAt + 4, duplicate, countAt + 4 + 17, 16);
+        assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(duplicate));
+        byte[] badRole = snapshot.clone(); badRole[countAt + 4 + 16] = (byte) 255;
+        assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(badRole));
+        byte[] tooMany = snapshot.clone(); ByteBuffer.wrap(tooMany).putInt(countAt, 21);
+        assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(tooMany));
+        for (ProjectRole role : Arrays.asList(null, ProjectRole.VIEWER, ProjectRole.MEMBER, ProjectRole.ADMINISTRATOR)) {
+            var message = new SharedMessage.SetMembership(request, s.scope(), 0, member, role);
+            var bytes = SharedProtocol.encode(message); assertEquals(message, SharedProtocol.decode(bytes));
+            assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(Arrays.copyOf(bytes, bytes.length + 1)));
+            bytes[bytes.length - (role == null ? 1 : 2)] = 2;
+            assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(bytes));
+        }
+    }
+
 }

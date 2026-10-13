@@ -29,7 +29,7 @@ public final class SharedClientState {
     public void receive(SharedMessage message) {
         if (message instanceof SharedMessage.Capabilities value) {
             capabilities = value;
-            status = value.protocolVersion() == 1 ? Status.AVAILABLE : Status.UNSUPPORTED;
+            status = value.protocolVersion() == dev.mcmateriallist.core.shared.protocol.SharedProtocol.VERSION ? Status.AVAILABLE : Status.UNSUPPORTED;
         } else if (message instanceof SharedMessage.Projects value) {
             projects = value.status() == SharedEvents.Status.OK ? value.projects() : List.of();
         } else if (message instanceof SharedMessage.Snapshot value) {
@@ -68,7 +68,7 @@ public final class SharedClientState {
         if (delta.projectRevision() != cursor + 1 || delta.manifestVersion() != snapshot.manifest().version()
             || !snapshot.rows().containsKey(delta.row().taskId())) { failed(); return; }
         adopt(delta.row(), delta.needsReconfirmation()); cursor = delta.projectRevision();
-        snapshot = new ProjectSnapshot(scope, snapshot.name(), snapshot.creator(), snapshot.viewers(), cursor,
+        snapshot = new ProjectSnapshot(scope, snapshot.name(), snapshot.creator(), snapshot.members(), cursor,
             snapshot.manifest(), snapshot.rows(), snapshot.needsReconfirmation());
     }
     private void adopt(TaskState row, Boolean reconfirmation) {
@@ -78,7 +78,7 @@ public final class SharedClientState {
         if (row.rowVersion() > current.rowVersion()) rows.put(row.taskId(), row);
         Set<TaskId> markers = new HashSet<>(snapshot.needsReconfirmation());
         if (reconfirmation != null) { if (reconfirmation) markers.add(row.taskId()); else markers.remove(row.taskId()); }
-        snapshot = new ProjectSnapshot(scope, snapshot.name(), snapshot.creator(), snapshot.viewers(), snapshot.projectRevision(),
+        snapshot = new ProjectSnapshot(scope, snapshot.name(), snapshot.creator(), snapshot.members(), snapshot.projectRevision(),
             snapshot.manifest(), rows, markers);
     }
     public void failed() { buffered.clear(); status = Status.RESYNC_REQUIRED; }

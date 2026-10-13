@@ -33,6 +33,16 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
                     check(buffer.readableBytes() == 61_480, "Near-max frame lost bytes at Fabric codec boundary");
                     check(Arrays.equals(frame.bytes(), SharedPayload.CODEC.decode(buffer).fragment().bytes()), "Frame roundtrip changed bytes");
                 } finally { buffer.release(); }
+                byte[] oldHello = ByteBuffer.allocate(9).putInt(1).put((byte) 0).putInt(1).array();
+                var oldFrame = new RegistryFriendlyByteBuf(Unpooled.buffer(), client.level.registryAccess());
+                try {
+                    SharedPayload.CODEC.encode(oldFrame, new SharedPayload(SharedTransfers.split(UUID.randomUUID(), oldHello).getFirst()));
+                    check(oldFrame.readableBytes() == 49 && oldFrame.getInt(oldFrame.readerIndex()) == 45
+                        && oldFrame.getInt(oldFrame.readerIndex() + 4) == 1,
+                        "Registered payload codec did not emit exact v1 frame for legacy Hello");
+                    check(Arrays.equals(oldHello, SharedPayload.CODEC.decode(oldFrame).fragment().bytes()),
+                        "Registered codec did not accept exact v1 Hello frame");
+                } finally { oldFrame.release(); }
                 var invalid = new RegistryFriendlyByteBuf(Unpooled.buffer(), client.level.registryAccess());
                 try {
                     invalid.writeInt(Integer.MAX_VALUE);
@@ -77,13 +87,17 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
                     ready, context.computeOnClient(client -> SharedClientNetworking.state().status()));
                 throw failure;
             }
-            context.runOnClient(client -> check(SharedClientNetworking.state().capabilities().protocolVersion() == 1,
-                "Actual registered socket handshake did not negotiate v1"));
+            context.runOnClient(client -> check(SharedClientNetworking.state().capabilities().protocolVersion() == SharedProtocol.VERSION,
+                "Actual registered socket handshake did not negotiate current protocol"));
             verifySocket(context, server);
+            verifyMembershipSocket(context, server);
+            verifyQueuedRevocation(context, server);
+            verifyCommittedRevocation(context, server);
             if (!Boolean.getBoolean("mcmateriallist.transportTest.respawnFirst")) verifyAbsentInitiatorEvents(context, server);
             verifyOrdinaryRespawn(context, server);
             if (Boolean.getBoolean("mcmateriallist.transportTest.respawnFirst")) verifyAbsentInitiatorEvents(context, server);
             verifyAdminSnapshotInterleaving(context);
+            verifyLegacyNegotiationSocket(context);
           }
           for (int i = 0; i < 100 && server.computeOnServer(TransportLifecycleProbe::slots) != 0; i++) context.waitTicks(1);
           check(server.computeOnServer(TransportLifecycleProbe::slots) == 0,
@@ -185,6 +199,25 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
             "Manifest invalidation failed to block writes pending explicit join"));
         UUID fresh = context.computeOnClient(client -> SharedClientNetworking.join(snapshot.scope()));
         context.waitFor(client -> SharedClientNetworking.reply(fresh) != null && SharedClientNetworking.state().synchronizedState(), 600);
+        var beforeInvalidTarget = await(service.join(actor, snapshot.scope())).value();
+        Path worldRoot = server.computeOnServer(mc -> mc.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT));
+        Path primary = worldRoot.resolve("mcmateriallist-shared").resolve("project-" + snapshot.scope().projectId() + ".json");
+        Path backup = primary.resolveSibling(primary.getFileName() + ".bak");
+        byte[] primaryBeforeInvalid = bytes(primary), backupBeforeInvalid = Files.exists(backup) ? bytes(backup) : null;
+        var archiveBeforeInvalid = new dev.mcmateriallist.core.shared.persistence.SharedProjectStore(worldRoot)
+            .load(snapshot.scope().worldNamespace(), snapshot.scope().projectId()).value();
+        var invalidTarget = new SharedCommand(snapshot.scope(), row, UUID.randomUUID(), 1, 1,
+            new SharedCommand.Assign(UUID.randomUUID()));
+        context.runOnClient(client -> sendRaw(new SharedMessage.TaskCommand(invalidTarget)));
+        context.waitFor(client -> TransportObservation.result(invalidTarget.operationId()) != null, 600);
+        check(TransportObservation.result(invalidTarget.operationId()).status() == SharedEvents.Status.INVALID_INPUT
+            && TransportObservation.result(invalidTarget.operationId()).row() == null
+            && beforeInvalidTarget.equals(await(service.join(actor, snapshot.scope())).value())
+            && Arrays.equals(primaryBeforeInvalid, bytes(primary))
+            && Arrays.equals(backupBeforeInvalid, Files.exists(backup) ? bytes(backup) : null)
+            && archiveBeforeInvalid.equals(new dev.mcmateriallist.core.shared.persistence.SharedProjectStore(worldRoot)
+                .load(snapshot.scope().worldNamespace(), snapshot.scope().projectId()).value()),
+            "Registered Admin assignment to an unlisted target changed authority, generation, journal or backup");
         var late = new SharedCommand(snapshot.scope(), row, UUID.randomUUID(), 1, 1, new SharedCommand.SetNote("late confirmed"));
         var originalAdmission = new java.util.concurrent.atomic.AtomicReference<SharedClientNetworking.AdmissionContext>();
         context.runOnClient(client -> {
@@ -266,6 +299,114 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
         for (var fragment : SharedTransfers.split(UUID.randomUUID(), SharedProtocol.encode(message)))
             net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(new SharedPayload(fragment));
     }
+    private static byte[] bytes(Path path) {
+        try { return Files.readAllBytes(path); }
+        catch (java.io.IOException failure) { throw new AssertionError("Could not read owned server fixture", failure); }
+    }
+    private static void verifyMembershipSocket(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server) {
+        UUID actor = context.computeOnClient(client -> client.player.getUUID());
+        var service = server.computeOnServer(SharedServerNetworking::service);
+        var definition = definition();
+        UUID owner = UUID.randomUUID();
+        var created = await(service.create(owner, SharedClientNetworking.state().capabilities().worldNamespace(),
+            "member socket fixture", definition)).value();
+        await(service.setMembership(owner, created.scope(), 0, actor, ProjectRole.MEMBER));
+        UUID join = context.computeOnClient(client -> SharedClientNetworking.join(created.scope()));
+        context.waitFor(client -> SharedClientNetworking.reply(join) != null && SharedClientNetworking.state().synchronizedState(), 600);
+        var row = definition.materials().keySet().iterator().next();
+        var forbidden = new SharedCommand(created.scope(), row, UUID.randomUUID(), 0, 0, new SharedCommand.Assign(owner));
+        context.runOnClient(client -> sendRaw(new SharedMessage.TaskCommand(forbidden)));
+        context.waitFor(client -> TransportObservation.result(forbidden.operationId()) != null, 600);
+        check(TransportObservation.result(forbidden.operationId()).status() == SharedEvents.Status.DENIED
+            && TransportObservation.result(forbidden.operationId()).row() == null,
+            "Member impersonated assignment target through authenticated receiver");
+        var own = new SharedCommand(created.scope(), row, UUID.randomUUID(), 0, 0, new SharedCommand.SetDone(true));
+        context.runOnClient(client -> sendRaw(new SharedMessage.TaskCommand(own)));
+        context.waitFor(client -> TransportObservation.result(own.operationId()) != null, 600);
+        check(TransportObservation.result(own.operationId()).status() == SharedEvents.Status.OK
+            && actor.equals(TransportObservation.result(own.operationId()).row().assignee())
+            && TransportObservation.result(own.operationId()).row().done(),
+            "Member unassigned Done failed to self-assign atomically over registered receiver");
+        var note = new SharedCommand(created.scope(), row, UUID.randomUUID(), 1, 0, new SharedCommand.SetNote("own note"));
+        context.runOnClient(client -> sendRaw(new SharedMessage.TaskCommand(note)));
+        context.waitFor(client -> TransportObservation.result(note.operationId()) != null, 600);
+        check(TransportObservation.result(note.operationId()).status() == SharedEvents.Status.OK,
+            "Member own note failed over registered receiver");
+        var revoked = await(service.setMembership(owner, created.scope(), 3, actor, null));
+        server.runOnServer(mc -> SharedServerNetworking.publishEvents(mc, revoked.events()));
+        context.waitFor(client -> SharedClientNetworking.state().status()
+            == dev.mcmateriallist.core.shared.transport.SharedClientState.Status.REVOKED, 600);
+        context.runOnClient(client -> check(SharedClientNetworking.state().snapshot() == null && SharedClientNetworking.reply(join) == null,
+            "Removed Member retained a private native snapshot"));
+        var old = new SharedCommand(created.scope(), row, UUID.randomUUID(), 2, 0, new SharedCommand.SetNote("revoked note"));
+        context.runOnClient(client -> sendRaw(new SharedMessage.TaskCommand(old)));
+        context.waitFor(client -> SharedClientNetworking.diagnostic() == SharedControlPayload.Reason.INVALID_INPUT, 600);
+        check(await(service.join(owner, created.scope())).value().rows().get(row).note().equals("own note"),
+            "Revoked request changed durable row");
+    }
+    private static void verifyQueuedRevocation(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server) {
+        UUID actor = context.computeOnClient(client -> client.player.getUUID());
+        UUID owner = UUID.randomUUID();
+        var service = server.computeOnServer(SharedServerNetworking::service);
+        Map<MaterialTaskId, Long> counts = new LinkedHashMap<>();
+        for (int i = 0; i < 900; i++) counts.put(new MaterialTaskId("minecraft:queued_" + i + "a".repeat(190)), 1L);
+        var large = new SharedManifest.Definition("f".repeat(64), definition().baseline(), counts, List.of());
+        var created = await(service.create(owner, SharedClientNetworking.state().capabilities().worldNamespace(),
+            "queued revoke fixture", large)).value();
+        await(service.setMembership(owner, created.scope(), 0, actor, ProjectRole.MEMBER));
+        QueuedRevocationGate.begin(server.computeOnServer(TransportLifecycleProbe::outgoing), created.scope());
+        try {
+            UUID join = context.computeOnClient(client -> SharedClientNetworking.join(created.scope()));
+            context.waitFor(client -> QueuedRevocationGate.held(), 600);
+            var removed = await(service.setMembership(owner, created.scope(), 1, actor, null));
+            check(removed.status() == SharedEvents.Status.OK, "Queue fixture did not commit removal");
+            server.runOnServer(mc -> SharedServerNetworking.publishEvents(mc, removed.events()));
+            QueuedRevocationGate.releaseAfterRevocation();
+            context.waitFor(client -> SharedClientNetworking.state().status()
+                == dev.mcmateriallist.core.shared.transport.SharedClientState.Status.REVOKED, 600);
+            context.runOnClient(client -> check(SharedClientNetworking.state().snapshot() == null
+                && SharedClientNetworking.reply(join) == null,
+                "Queued prepared snapshot was adopted after authenticated removal"));
+            check(await(service.join(owner, created.scope())).value().rows().values().stream()
+                .allMatch(row -> !row.done() && row.note().isEmpty() && row.assignee() == null),
+                "Revocation barrier changed durable task rows");
+            QueuedRevocationGate.finish();
+        } finally { QueuedRevocationGate.releaseAfterRevocation(); }
+    }
+    private static void verifyCommittedRevocation(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server) {
+        UUID actor = context.computeOnClient(client -> client.player.getUUID());
+        UUID owner = UUID.randomUUID(); var service = server.computeOnServer(SharedServerNetworking::service);
+        var created = await(service.create(owner, SharedClientNetworking.state().capabilities().worldNamespace(),
+            "committed revoke fixture", definition())).value();
+        check(await(service.setMembership(owner, created.scope(), 0, actor, ProjectRole.MEMBER)).status()
+            == SharedEvents.Status.OK, "Committed fixture did not grant membership");
+        TransportLifecycleProbe.holdNextActual(service);
+        try {
+            UUID join = context.computeOnClient(client -> SharedClientNetworking.join(created.scope()));
+            context.waitFor(client -> TransportLifecycleProbe.held() && TransportLifecycleProbe.startedHeld(), 600);
+            check(!TransportLifecycleProbe.subscribed(created.scope()),
+                "Held snapshot incorrectly proved server subscription had been applied");
+            // A durable Join reply may precede the server tick that applies its Started subscription.
+            TransportLifecycleProbe.releaseStarted();
+            context.waitFor(client -> TransportLifecycleProbe.subscribed(created.scope()), 600);
+            check(TransportLifecycleProbe.held(), "Private snapshot escaped before committed revocation");
+            var removed = await(service.setMembership(owner, created.scope(), 1, actor, null));
+            check(removed.status() == SharedEvents.Status.OK, "Committed fixture did not commit removal");
+            server.runOnServer(mc -> SharedServerNetworking.publishEvents(mc, removed.events()));
+            context.waitFor(client -> SharedClientNetworking.state().status()
+                == dev.mcmateriallist.core.shared.transport.SharedClientState.Status.REVOKED, 600);
+            TransportLifecycleProbe.release();
+            context.waitTicks(4);
+            context.runOnClient(client -> check(SharedClientNetworking.state().snapshot() == null
+                && SharedClientNetworking.reply(join) == null,
+                "Committed callback published private snapshot after revocation"));
+            check(await(service.join(owner, created.scope())).value().rows().equals(created.rows()),
+                "Committed revocation barrier changed durable task rows");
+        } finally { TransportLifecycleProbe.releaseActualIfHeld(); }
+    }
     private static void verifyAbsentInitiatorEvents(ClientGameTestContext context,
             net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server) {
         UUID actor = context.computeOnClient(client -> client.player.getUUID());
@@ -336,6 +477,34 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
     private static <T> T await(CompletionStage<T> stage) {
         try { return stage.toCompletableFuture().get(20, TimeUnit.SECONDS); }
         catch (Exception failure) { throw new AssertionError("Test setup authority failed", failure); }
+    }
+    private static void verifyLegacyNegotiationSocket(ClientGameTestContext context) {
+        byte[] oldHello = ByteBuffer.allocate(9).putInt(1).put((byte) 0).putInt(1).array();
+        context.runOnClient(client -> {
+            var fragment = SharedTransfers.split(UUID.randomUUID(), oldHello).getFirst();
+            net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(new SharedPayload(fragment));
+        });
+        context.waitFor(client -> SharedClientNetworking.diagnostic() == SharedControlPayload.Reason.UNSUPPORTED, 600);
+        context.runOnClient(client -> check(SharedClientNetworking.state().status()
+            == dev.mcmateriallist.core.shared.transport.SharedClientState.Status.UNSUPPORTED,
+            "Actual registered v1 client Hello did not become UNSUPPORTED"));
+        context.runOnClient(client -> check(SharedClientNetworking.negotiate(), "Current renegotiation unavailable"));
+        context.waitFor(client -> SharedClientNetworking.state().capabilities() != null, 600);
+        LegacyPeerFixture.begin();
+        try {
+            context.runOnClient(client -> check(SharedClientNetworking.negotiate(), "Old-peer fixture negotiation unavailable"));
+            context.waitFor(client -> LegacyPeerFixture.sawFrame(), 600);
+            context.waitFor(client -> SharedClientNetworking.state().status()
+                == dev.mcmateriallist.core.shared.transport.SharedClientState.Status.UNSUPPORTED, 600);
+            check(LegacyPeerFixture.accepted(),
+                "Frozen v1 peer rejected actual outgoing negotiation frame/message headers or inner version");
+            context.runOnClient(client -> check(SharedClientNetworking.diagnostic() == SharedControlPayload.Reason.UNSUPPORTED,
+                "Registered old-peer diagnostic did not reach client UNSUPPORTED state"));
+        } finally { LegacyPeerFixture.finish(); }
+        context.runOnClient(client -> check(SharedClientNetworking.negotiate(), "Post-fixture negotiation unavailable"));
+        context.waitFor(client -> SharedClientNetworking.state().capabilities() != null, 600);
+        org.slf4j.LoggerFactory.getLogger("mcmateriallist-transport-test")
+            .info("Shared transport historical v1 Hello and test-only frozen old-peer parser PASS");
     }
     private static void verifyAdminSnapshotInterleaving(ClientGameTestContext context) {
         Map<MaterialTaskId, Long> materials = new LinkedHashMap<>();

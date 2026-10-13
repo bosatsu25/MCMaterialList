@@ -30,18 +30,38 @@ public final class SharedTransfers {
         return List.copyOf(result);
     }
     public static byte[] encode(Fragment f) {
+        return encodeFrame(f, SharedProtocol.VERSION);
+    }
+    /** The only schema-1 frame this implementation emits is a single exact Hello. */
+    public static byte[] encodeNegotiationFrame(Fragment f) {
+        if (!isNegotiationHello(f)) throw new IllegalArgumentException("Invalid negotiation fragment");
+        return encodeFrame(f, 1);
+    }
+    public static boolean isNegotiationHello(Fragment f) {
+        if (f.index() != 0 || f.count() != 1 || f.totalBytes() != 9) return false;
+        byte[] bytes = f.bytes();
+        return bytes.length == 9 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0
+            && bytes[3] == 1 && bytes[4] == 0;
+    }
+    private static byte[] encodeFrame(Fragment f, int version) {
         return SharedBinary.encode(FRAME_BYTES, out -> {
-            out.writeInt(SharedProtocol.VERSION); SharedBinary.uuid(out, f.transferId()); out.writeInt(f.index());
+            out.writeInt(version); SharedBinary.uuid(out, f.transferId()); out.writeInt(f.index());
             out.writeInt(f.count()); out.writeInt(f.totalBytes()); out.writeInt(f.bytes.length); out.write(f.bytes);
         });
     }
     public static Fragment decode(byte[] frame) {
         return SharedBinary.decode(frame, FRAME_BYTES, in -> {
-            if (in.readInt() != SharedProtocol.VERSION) throw new IllegalArgumentException("Unsupported fragment version");
+            int version = in.readInt();
+            if (version != SharedProtocol.VERSION && version != 1) throw new IllegalArgumentException("Unsupported fragment version");
             UUID id = SharedBinary.uuid(in); int index = in.readInt(), count = in.readInt(), total = in.readInt();
             int size = SharedBinary.count(in, SharedLimits.FRAGMENT_BYTES);
             if (size > in.available()) throw new IOException("Truncated shared frame");
-            return new Fragment(id, index, count, total, in.readNBytes(size));
+            Fragment fragment = new Fragment(id, index, count, total, in.readNBytes(size));
+            if (version == 1 && (frame.length != 45 || !isNegotiationHello(fragment)))
+                throw new IllegalArgumentException("Unsupported legacy fragment");
+            if (version == SharedProtocol.VERSION && isNegotiationHello(fragment))
+                throw new IllegalArgumentException("Mixed negotiation versions");
+            return fragment;
         });
     }
     /** Invalid/changed/duplicate fragments discard that transfer and fail closed. Expiry is never extended. */

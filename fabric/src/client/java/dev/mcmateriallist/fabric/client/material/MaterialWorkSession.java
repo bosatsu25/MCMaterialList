@@ -75,6 +75,9 @@ public final class MaterialWorkSession {
             && !TaskScheduler.getInstanceClient().hasTask(TaskCountBlocksPlacement.class);
     }
     public boolean writable() { return shared.selected() ? shared.writable() : !pending && !shared.loading() && ready() && status == StoreStatus.OK && confirmed != null; }
+    public boolean allowed(MaterialTaskId id, TaskCommand intent) {
+        return shared.selected() ? shared.allowed(id, intent) : writable() && state(id) != null;
+    }
     public String feedback() {
         if (shared.loading() || shared.selected()) return shared.feedback();
         if (pending) return text("saving");

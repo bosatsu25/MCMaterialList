@@ -62,7 +62,7 @@ class SharedStoreTest {
         assertEquals(StoreStatus.RECOVERY_REQUIRED, store.save(a, -1).status());
         assertEquals(List.of(a.snapshot().scope().projectId()), store.openWorld().value().projects());
         assertEquals(StoreStatus.OK, store.recover(a.snapshot().scope().worldNamespace(), a.snapshot().scope().projectId()).status());
-        String future = Files.readString(file(a)).replace("\"schema\":1", "\"schema\":2"); Files.writeString(file(a), future);
+        String future = Files.readString(file(a)).replace("\"schema\":2", "\"schema\":3"); Files.writeString(file(a), future);
         assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, load(store, a).status());
         assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.recover(a.snapshot().scope().worldNamespace(), a.snapshot().scope().projectId()).status());
         assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.save(next(a), 0).status()); assertEquals(future, Files.readString(file(a)));
@@ -116,7 +116,7 @@ class SharedStoreTest {
         for (Path primary : List.of(file(a), world)) {
             Path previous = primary.resolveSibling(primary.getFileName() + ".bak");
             byte[] current = Files.readAllBytes(primary);
-            for (String version : List.of("2", "99.0", "1e2", "2147483648", "1e999999999999999999999")) {
+            for (String version : List.of(primary.equals(world) ? "2" : "3", "99.0", "1e2", "2147483648", "1e999999999999999999999", "1e" + "9".repeat(10000), "9".repeat(10000))) {
                 for (String future : List.of("{\"schema\":" + version + ",\"payload\":{},\"kind\":\"future\"}",
                     "{\"kind\":\"future\",\"payload\":{},\"schema\":" + version + "}")) {
                     for (boolean futurePrimary : new boolean[]{true, false}) {
@@ -142,7 +142,7 @@ class SharedStoreTest {
         var store = new SharedProjectStore(root); var a = initial(store); assertTrue(store.save(a, -1).ok());
         for (Path path : List.of(file(a), root.resolve("mcmateriallist-shared/world.json"))) {
             var json = com.google.gson.JsonParser.parseString(Files.readString(path)).getAsJsonObject();
-            String reordered = "{\"payload\":" + json.get("payload") + ",\"kind\":" + json.get("kind") + ",\"schema\":1}";
+            String reordered = "{\"payload\":" + json.get("payload") + ",\"kind\":" + json.get("kind") + ",\"schema\":" + json.get("schema") + "}";
             Files.writeString(path, reordered);
             assertTrue(path.equals(file(a)) ? load(store, a).ok() : store.openWorld().ok());
             assertEquals(reordered, Files.readString(path));

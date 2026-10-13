@@ -15,12 +15,13 @@ import java.util.*;
 
 /** Synchronous controlled storage boundary. SharedProjectService owns its background I/O lifecycle. */
 public final class SharedProjectStore {
-    public static final int SCHEMA = 1, MAX_JSON_BYTES = 128 * 1024 * 1024 + 256;
+    public static final int SCHEMA = 2, WORLD_SCHEMA = 1, MAX_JSON_BYTES = 128 * 1024 * 1024 + 256;
     public record Result<T>(StoreStatus status, T value) {
         public boolean ok() { return status == StoreStatus.OK; }
         static <T> Result<T> failure(StoreStatus status) { return new Result<>(status, null); }
     }
     public record World(UUID namespace, List<UUID> projects) { public World { projects = List.copyOf(projects); } }
+    private record Payload(int schema, byte[] bytes) {}
     public enum WriteStage { BEFORE_BACKUP_REPLACE, BEFORE_PRIMARY_REPLACE }
     @FunctionalInterface public interface WriteHook { void before(WriteStage stage) throws IOException; }
     private final Path root;
@@ -34,7 +35,7 @@ public final class SharedProjectStore {
         try {
             directories(root);
             return locked(worldFile(), () -> {
-                Result<byte[]> world = loadBytes(worldFile(), "world");
+                Result<Payload> world = loadBytes(worldFile(), "world");
                 List<UUID> projects = projectIds();
                 if (world.status() == StoreStatus.MISSING) {
                     if (!projects.isEmpty()) return Result.failure(StoreStatus.CORRUPT);
@@ -43,7 +44,7 @@ public final class SharedProjectStore {
                     return new Result<>(StoreStatus.OK, new World(namespace, projects));
                 }
                 if (!world.ok()) return Result.failure(world.status());
-                return new Result<>(StoreStatus.OK, new World(readUuid(world.value()), projects));
+                return new Result<>(StoreStatus.OK, new World(readUuid(world.value().bytes()), projects));
             });
         } catch (IOException | IllegalArgumentException exception) { return failure(exception); }
     }
@@ -58,9 +59,10 @@ public final class SharedProjectStore {
         } catch (IOException | IllegalArgumentException exception) { return failure(exception); }
     }
     private Result<ProjectArchive> readProject(Path file, UUID world, UUID project) throws IOException {
-        Result<byte[]> bytes = read(file, "project");
+        Result<Payload> bytes = read(file, "project");
         if (!bytes.ok()) return Result.failure(bytes.status());
-        ProjectArchive archive = SharedBinary.decodeArchive(bytes.value());
+        Payload payload = bytes.value();
+        ProjectArchive archive = payload.schema() == 1 ? SharedBinary.decodeLegacyArchive(payload.bytes()) : SharedBinary.decodeArchive(payload.bytes());
         if (!archive.snapshot().scope().worldNamespace().equals(world) || !archive.snapshot().scope().projectId().equals(project))
             return Result.failure(StoreStatus.CORRUPT);
         return new Result<>(StoreStatus.OK, archive);
@@ -105,37 +107,38 @@ public final class SharedProjectStore {
         try {
             directories(root);
             return locked(worldFile(), () -> {
-                Result<byte[]> candidate = loadBytes(worldFile(), "world");
+                Result<Payload> candidate = loadBytes(worldFile(), "world");
                 if (candidate.status() != StoreStatus.RECOVERY_REQUIRED) return Result.failure(candidate.status());
-                UUID namespace = readUuid(candidate.value()); retainDamaged(worldFile());
-                replace(worldFile(), envelope("world", candidate.value()), "world", WriteStage.BEFORE_PRIMARY_REPLACE);
+                UUID namespace = readUuid(candidate.value().bytes()); retainDamaged(worldFile());
+                replace(worldFile(), envelope("world", candidate.value().bytes()), "world", WriteStage.BEFORE_PRIMARY_REPLACE);
                 return new Result<>(StoreStatus.OK, namespace);
             });
         } catch (IOException | IllegalArgumentException exception) { return failure(exception); }
     }
-    private Result<byte[]> loadBytes(Path file, String kind) throws IOException {
-        Result<byte[]> primary = read(file, kind);
+    private Result<Payload> loadBytes(Path file, String kind) throws IOException {
+        Result<Payload> primary = read(file, kind);
         if (primary.ok() || primary.status() == StoreStatus.UNSUPPORTED_SCHEMA || primary.status() == StoreStatus.TOO_LARGE) return primary;
-        Result<byte[]> previous = read(backup(file), kind);
+        Result<Payload> previous = read(backup(file), kind);
         if (previous.status() == StoreStatus.UNSUPPORTED_SCHEMA || previous.status() == StoreStatus.TOO_LARGE) return previous;
         if (previous.ok()) return new Result<>(StoreStatus.RECOVERY_REQUIRED, previous.value());
         return primary.status() == StoreStatus.MISSING && previous.status() != StoreStatus.MISSING ? previous : primary;
     }
-    private Result<byte[]> read(Path file, String kind) throws IOException {
+    private Result<Payload> read(Path file, String kind) throws IOException {
         guard(file, false);
         if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return Result.failure(StoreStatus.MISSING);
         if (Files.size(file) > MAX_JSON_BYTES) return Result.failure(StoreStatus.TOO_LARGE);
         try { return parse(readText(file), kind); }
         catch (IllegalArgumentException | java.nio.charset.CharacterCodingException exception) { return Result.failure(StoreStatus.CORRUPT); }
     }
-    private static Result<byte[]> parse(String json, String kind) {
-        var schema = SharedSchemaHeader.classify(json, Set.of("schema", "kind", "payload"));
+    private static Result<Payload> parse(String json, String kind) {
+        var schema = SharedSchemaHeader.classify(json, Set.of("schema", "kind", "payload"), kind.equals("project") ? SCHEMA : WORLD_SCHEMA);
         if (schema != StoreStatus.OK) return Result.failure(schema);
         try (JsonReader reader = new JsonReader(new StringReader(json))) {
             reader.setStrictness(com.google.gson.Strictness.STRICT); reader.beginObject();
-            String encoded = null, actualKind = null;
+            String encoded = null, actualKind = null; int version = 0;
             while (reader.hasNext()) {
                 switch (reader.nextName()) {
+                    case "schema" -> version = Integer.parseInt(reader.nextString());
                     case "kind" -> {
                         if (reader.peek() != JsonToken.STRING) return Result.failure(StoreStatus.CORRUPT);
                         actualKind = reader.nextString();
@@ -151,12 +154,17 @@ public final class SharedProjectStore {
             if (!kind.equals(actualKind) || encoded == null || reader.peek() != JsonToken.END_DOCUMENT) return Result.failure(StoreStatus.CORRUPT);
             if (encoded.length() > ((long) SharedLimits.ARCHIVE_BYTES + 2) / 3 * 4) return Result.failure(StoreStatus.TOO_LARGE);
             byte[] bytes = Base64.getDecoder().decode(encoded);
-            if (kind.equals("project")) SharedBinary.decodeArchive(bytes); else readUuid(bytes);
-            return new Result<>(StoreStatus.OK, bytes);
+            if (kind.equals("project")) {
+                // Opening never re-encodes a legacy payload, even near the archive byte limit.
+                if (version == 1) SharedBinary.decodeLegacyArchive(bytes);
+                else SharedBinary.decodeArchive(bytes);
+            } else readUuid(bytes);
+            return new Result<>(StoreStatus.OK, new Payload(version, bytes));
         } catch (IOException | IllegalArgumentException | IllegalStateException exception) { return Result.failure(StoreStatus.CORRUPT); }
     }
     private static String envelope(String kind, byte[] payload) {
-        String result = "{\"schema\":1,\"kind\":\"" + kind + "\",\"payload\":\"" + Base64.getEncoder().encodeToString(payload) + "\"}";
+        int version = kind.equals("project") ? SCHEMA : WORLD_SCHEMA;
+        String result = "{\"schema\":" + version + ",\"kind\":\"" + kind + "\",\"payload\":\"" + Base64.getEncoder().encodeToString(payload) + "\"}";
         if (result.length() > MAX_JSON_BYTES) throw new IllegalArgumentException("Shared store size limit"); return result;
     }
     private String readText(Path file) throws IOException {

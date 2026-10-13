@@ -56,13 +56,23 @@ public final class MaterialDetailScreen extends GuiBase {
             && (!session.shared().selected() || session.shared().snapshot() != null);
         if (!sameContext) { draft = ""; note.setValueWrapper(""); }
         var state = sameContext ? session.state(id) : null;
-        if (assign != null) assign.setEnabled(state != null && session.shared().writable());
+        if (assign != null) {
+            boolean canAssign = state != null && session.shared().allowed(id, new TaskCommand.Assign(null));
+            assign.setEnabled(canAssign);
+            assign.setHoverStrings(!canAssign && sameContext
+                ? session.shared().taskFeedback(id, new TaskCommand.Assign(null)) : session.feedback());
+        }
         var actor = mc.player == null ? null : mc.player.getUUID();
         for (int i = 0; i < actions.size(); i++) {
             boolean allowed = state != null && actor != null && (i == 0 ? state.assignee() == null || actor.equals(state.assignee())
                 : i == 1 ? actor.equals(state.assignee()) : true);
-            actions.get(i).setEnabled(sameContext && session.writable() && allowed);
-            actions.get(i).setHoverStrings(allowed ? session.feedback() : MaterialWorkSession.text("ownership_required"));
+            TaskCommand intent = i == 0 ? new TaskCommand.Claim() : i == 1 ? new TaskCommand.Release() : new TaskCommand.SetNote("");
+            boolean permitted = session.shared().selected() ? session.allowed(id, intent) : session.writable() && allowed;
+            actions.get(i).setEnabled(sameContext && permitted);
+            String hover = session.feedback();
+            if (!permitted && sameContext) hover = session.shared().selected()
+                ? session.shared().taskFeedback(id, intent) : MaterialWorkSession.text("ownership_required");
+            actions.get(i).setHoverStrings(hover);
         }
         drawString(ctx, MaterialPresentation.clamp(MaterialWorkSession.text("assignee", MaterialWorkSession.playerName(state == null ? null : state.assignee())), getScreenWidth() - 24), 12, 30, 0xFFFFFFFF);
         drawString(ctx, MaterialPresentation.clamp(state != null && state.done() ? MaterialWorkSession.text("completed", MaterialWorkSession.playerName(state.completedBy()), state.completedAt().toString()) : MaterialWorkSession.text("incomplete"), getScreenWidth() - 24), 12, 46, 0xFFFFFFFF);

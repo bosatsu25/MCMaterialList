@@ -3,6 +3,7 @@
   "package": "dev.mcmateriallist.fabric.test.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": ["SharedResultObservation", "SharedServerAccess", "SharedRuntimeCounts",
-    "SharedCompletionIdentity", "SharedProcessorControl", "SharedProcessorObservation", "SharedClientFrameObservation"],
+    "SharedCompletionIdentity", "SharedStartedIdentity", "SharedProcessorControl", "SharedProcessorObservation", "SharedClientFrameObservation", "SharedOutgoingRevocation",
+    "SharedLegacyPeerWire", "SharedLegacyCodecWire"],
   "injectors": {"defaultRequire": 1}
 }

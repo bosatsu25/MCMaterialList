@@ -79,7 +79,13 @@ public abstract class MaterialRowMixin extends WidgetListEntrySortable<MaterialL
         String text = null;
         var state = mcmateriallist$work.state(mcmateriallist$id);
         if (mcmateriallist$head.isMouseOver(mouseX, mouseY)) text = MaterialPresentation.info(state);
-        else if (mcmateriallist$done.isMouseOver(mouseX, mouseY)) text = mcmateriallist$work.writable() ? MaterialWorkSession.text(state != null && state.done() ? "undo" : "done") : mcmateriallist$work.feedback();
+        else if (mcmateriallist$done.isMouseOver(mouseX, mouseY)) {
+            boolean permitted = state != null && mcmateriallist$work.allowed(mcmateriallist$id, new TaskCommand.SetDone(!state.done()));
+            text = permitted ? MaterialWorkSession.text(state.done() ? "undo" : "done")
+                : mcmateriallist$work.shared().selected()
+                    ? mcmateriallist$work.shared().taskFeedback(mcmateriallist$id, state == null ? null : new TaskCommand.SetDone(!state.done()))
+                    : mcmateriallist$work.feedback();
+        }
         else if (mcmateriallist$notice.isMouseOver(mouseX, mouseY)) text = MaterialPresentation.info(state) + " | " + mcmateriallist$work.feedback() + (mcmateriallist$work.changed(mcmateriallist$id) ? " | " + MaterialWorkSession.text("definition_changed") : "");
         if (text != null) { ctx.renderTooltip(textRenderer, Component.literal(text), mouseX, mouseY); callback.cancel(); }
     }

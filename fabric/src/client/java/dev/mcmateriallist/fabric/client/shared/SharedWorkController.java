@@ -96,6 +96,31 @@ public final class SharedWorkController {
         return synchronizedView(backend) && entry.busy == 0 && !entry.archive.recoveredJournalUncertain()
             && !SharedClientService.hasUnknown(entry.archive, actor(), snapshot.scope()) && snapshot.canWrite(actor()) && backend.nativeReady();
     }
+    boolean allowed(SharedWorkBackend backend, TaskId task, TaskCommand intent) {
+        var snapshot = snapshot(backend.entry(), backend.kind());
+        if (!writable(backend) || snapshot == null || task == null || intent == null
+                || (backend.kind() == DatasetKind.MATERIALS) != (task instanceof MaterialTaskId)) return false;
+        try {
+            var row = snapshot.rows().get(task);
+            if (row == null || intent instanceof TaskCommand.Claim && row.assignee() != null
+                    || intent instanceof TaskCommand.Release && !actor().equals(row.assignee())
+                    || intent instanceof TaskCommand.Assign assign && assign.assignee() != null
+                        && !snapshot.canRead(assign.assignee())) return false;
+            return ProjectPermissions.allows(snapshot, actor(), row, wire(intent));
+        }
+        catch (IllegalArgumentException invalid) { return false; }
+    }
+    boolean administer(SharedWorkBackend backend, boolean definition) {
+        var entry = backend.entry(); var ref = reference(entry, backend.kind());
+        if (closed || entry == null || ref == null || entry.loading || entry.busy != 0 || entry.storage != StoreStatus.OK
+                || !ref.actor().equals(actor()) || entry.hidden.contains(ref.scope()) || entry.archive.recoveredJournalUncertain()
+                || SharedClientService.hasUnknown(entry.archive, actor(), ref.scope()) || admins.size() >= REQUESTS) return false;
+        var state = SharedClientNetworking.state(); var selected = snapshot(entry, backend.kind());
+        if (!state.synchronizedState() || selected == null || !ref.scope().equals(state.scope())
+                || !selected.equals(state.snapshot()) || entry.binding(backend.kind()).cache().cursor() != state.cursor()
+                || !selected.canAdminister(actor()) || !backend.nativeReady()) return false;
+        return definition || synchronizedView(backend);
+    }
     String reason(SharedWorkBackend backend) {
         var entry = backend.entry();
         if (entry == null) return backend.nativeReady() ? "placement_capacity" : "placement_unavailable";
@@ -118,7 +143,7 @@ public final class SharedWorkController {
         if (entry.reason != null && !entry.reason.equals("result.OK")) return entry.reason;
         if (!synchronizedView(backend)) return "join_required";
         if (!backend.nativeReady()) return "capture.MATERIALS_NOT_READY";
-        return snapshot(entry, backend.kind()).canWrite(actor()) ? "shared" : "viewer";
+        return snapshot(entry, backend.kind()).role(actor()) == ProjectRole.VIEWER ? "viewer" : "shared";
     }
     static String availability() {
         return switch (SharedClientNetworking.state().status()) {
@@ -172,23 +197,50 @@ public final class SharedWorkController {
         Entry entry = backend.entry(); if (entry == null || entry.busy > 0 || entry.storage != StoreStatus.RECOVERY_REQUIRED) return;
         complete(entry, service.recover(entry.placement), result -> { if (result.ok()) setReason(entry, "recovered_uncertain"); });
     }
-    public void viewer(SharedWorkBackend backend, UUID target, boolean granted) {
+    public void membership(SharedWorkBackend backend, UUID target, ProjectRole role) {
         var entry = backend.entry(); var snapshot = snapshot(entry, backend.kind());
-        if (!backend.admin() || target == null || admins.size() >= REQUESTS) return;
+        if (!administer(backend, false) || target == null) return;
         try {
-            UUID request = SharedClientNetworking.setViewer(snapshot.scope(), snapshot.projectRevision(), target, granted);
+            UUID request = SharedClientNetworking.setMembership(snapshot.scope(), snapshot.projectRevision(), target, role);
             admins.put(request, new Admin(entry, reference(entry, backend.kind()), Minecraft.getInstance().getConnection(), System.nanoTime()));
             // The producer invalidates membership changes; only an explicit join restores writes.
             setReason(entry, "permissions_requested");
         } catch (IllegalStateException unavailable) { setReason(entry, "request_failed"); }
     }
+    public void viewer(SharedWorkBackend backend, UUID target, boolean granted) {
+        membership(backend, target, granted ? ProjectRole.VIEWER : null);
+    }
+    public void updateDefinition(SharedWorkBackend backend) {
+        if (!administer(backend, true)) return;
+        var entry = backend.entry(); var original = reference(entry, backend.kind());
+        var selected = snapshot(entry, backend.kind());
+        prepare(backend, true, (capture, digest) -> {
+            if (!administer(backend, true) || !Objects.equals(original, reference(entry, backend.kind()))
+                    || !selected.equals(snapshot(entry, backend.kind()))) { setReason(entry, "state_changed"); return; }
+            try {
+                var definition = new SharedManifest.Definition(digest, capture.source().baseline(), capture.materials(), capture.source().regions());
+                UUID request = SharedClientNetworking.updateManifest(selected.scope(), selected.projectRevision(), selected.manifest().version(), definition);
+                admins.put(request, new Admin(entry, original, Minecraft.getInstance().getConnection(), System.nanoTime()));
+                setReason(entry, "definition_requested");
+            } catch (IllegalArgumentException | IllegalStateException unavailable) { setReason(entry, "request_failed"); }
+        });
+    }
+    private static SharedCommand.Intent wire(TaskCommand intent) {
+        return switch (intent) {
+            case TaskCommand.Claim ignored -> new SharedCommand.Claim();
+            case TaskCommand.Release ignored -> new SharedCommand.Release();
+            case TaskCommand.Assign assign -> assign.assignee() == null ? new SharedCommand.ClearAssignment() : new SharedCommand.Assign(assign.assignee());
+            case TaskCommand.SetDone done -> new SharedCommand.SetDone(done.done());
+            case TaskCommand.SetNote note -> new SharedCommand.SetNote(note.note());
+        };
+    }
     void command(SharedWorkBackend backend, TaskId task, TaskCommand intent) {
-        if (!writable(backend) || task == null || backend.state(task) == null) return;
+        if (!allowed(backend, task, intent)) return;
         Entry entry = backend.entry(); var original = reference(entry, backend.kind());
         var presentation = entry.binding(backend.kind()).cache();
         prepare(backend, false, (capture, digest) -> {
             var current = entry.binding(backend.kind()).cache();
-            if (!Objects.equals(original, reference(entry, backend.kind())) || !synchronizedView(backend) || current == null
+            if (!Objects.equals(original, reference(entry, backend.kind())) || !allowed(backend, task, intent) || current == null
                 || current.snapshot().manifest().version() != presentation.snapshot().manifest().version()
                 || !Objects.equals(current.snapshot().rows().get(task), presentation.snapshot().rows().get(task))) {
                 setReason(entry, "state_changed"); return;
@@ -199,14 +251,7 @@ public final class SharedWorkController {
                 setReason(entry, "baseline_mismatch"); return;
             }
             try {
-            SharedCommand.Intent wire = switch (intent) {
-                case TaskCommand.Claim ignored -> new SharedCommand.Claim();
-                case TaskCommand.Release ignored -> new SharedCommand.Release();
-                case TaskCommand.Assign assign -> assign.assignee() == null ? new SharedCommand.ClearAssignment() : new SharedCommand.Assign(assign.assignee());
-                case TaskCommand.SetDone done -> new SharedCommand.SetDone(done.done());
-                case TaskCommand.SetNote note -> new SharedCommand.SetNote(note.note());
-            };
-            var command = new SharedCommand(original.scope(), task, UUID.randomUUID(), selected.rows().get(task).rowVersion(), selected.manifest().version(), wire);
+            var command = new SharedCommand(original.scope(), task, UUID.randomUUID(), selected.rows().get(task).rowVersion(), selected.manifest().version(), wire(intent));
                 entry.busy++; setReason(entry, "saving_intent");
                 SharedClientNetworking.submit(command, new SharedClientNetworking.DurableAdmission() {
                   @Override public CompletionStage<Boolean> persist(SharedClientNetworking.AdmissionContext context, SharedCommand value) {
@@ -242,7 +287,7 @@ public final class SharedWorkController {
         if (closed || entry == null || backend.pending() || actor() == null || requests.size() >= REQUESTS
             || requests.values().stream().anyMatch(request -> request.backend().entry() == entry)
             || (entry.storage != StoreStatus.OK && entry.storage != StoreStatus.MISSING)) return false;
-        if (SharedClientNetworking.state().capabilities() == null || SharedClientNetworking.state().capabilities().protocolVersion() != 1) { setReason(entry, availability()); return false; }
+        if (SharedClientNetworking.state().capabilities() == null || SharedClientNetworking.state().capabilities().protocolVersion() != dev.mcmateriallist.core.shared.protocol.SharedProtocol.VERSION) { setReason(entry, availability()); return false; }
         return true;
     }
     @FunctionalInterface private interface Prepared { void accept(NativeSharedCapture.Capture capture, String digest); }

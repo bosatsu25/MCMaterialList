@@ -89,7 +89,10 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             click(context, context.computeOnClient(client -> rowButton(screen, stone, MaterialHeadButton.class)));
             context.waitForScreen(MaterialDetailScreen.class);
             context.runOnClient(client -> check(work.writable()
-                && ((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Claim")).enabled(), "Claim was not enabled on the confirmed detail"));
+                && !((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Claim")).enabled()
+                && ((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Release")).enabled(),
+                "Confirmed own assignment exposed incorrect Claim/Release controls"));
+            action(context, "Release"); context.waitFor(client -> work.writable() && work.state(stone).assignee() == null, 600);
             int beforeClaim = SharedUiDelays.submissions;
             action(context, "Claim");
             try { context.waitFor(client -> work.writable() && work.state(stone).assignee() != null, 600); }
@@ -112,9 +115,21 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             input(context, context.computeOnClient(client -> client.player.getUUID().toString())); action(context, "Assign...");
             context.waitFor(client -> work.writable() && work.state(stone).assignee() != null, 600);
             action(context, "Clear assignment"); context.waitFor(client -> work.writable() && work.state(stone).assignee() == null, 600);
+            var authoritativeBeforeInvalid = server.computeOnServer(SharedServerNetworking::service)
+                .join(context.computeOnClient(client -> client.player.getUUID()), materialReference.scope())
+                .toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value();
+            var invalidPlacement = context.computeOnClient(client -> PlacementWorkAdapter.captureRegions(placement).snapshot().placementId());
+            var journalBeforeInvalid = new SharedClientStore(config).load(invalidPlacement).value().operations();
             back(context); action(context, "Assign..."); input(context, new UUID(31, 32).toString()); action(context, "Assign...");
-            context.waitFor(client -> work.writable() && work.shared().feedback().equals(SharedWorkBackend.text("result.INVALID_INPUT")), 600);
-            context.runOnClient(client -> check(work.state(stone).assignee() == null, "Rejected assignment optimistically changed native row"));
+            context.runOnClient(client -> check(work.writable() && work.state(stone).assignee() == null
+                && SharedWorkBackend.text("target_not_participant").equals(((SharedUiAccess.Input) client.gui.screen()).validation()),
+                "Unlisted assignment target was not refused before durable admission"));
+            check(authoritativeBeforeInvalid.equals(server.computeOnServer(SharedServerNetworking::service)
+                .join(context.computeOnClient(client -> client.player.getUUID()), materialReference.scope())
+                .toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value()),
+                "Refused native assignment changed authoritative rows or revision");
+            check(journalBeforeInvalid.equals(new SharedClientStore(config).load(invalidPlacement).value().operations()),
+                "Refused native assignment entered the durable client journal");
             back(context); back(context);
             // Real presend save is held without blocking either thread. Local selection must refuse until settled.
             var placementId = context.computeOnClient(client -> PlacementWorkAdapter.captureRegions(placement).snapshot().placementId());
@@ -140,8 +155,8 @@ public final class SharedUiClientTest implements FabricClientGameTest {
                 .allMatch(operation -> operation.confirmation() != null), "Late actual socket result did not settle original journal");
             check(store.load(placementId).value().operations().containsAll(unrelatedUnknowns), "Late baseline result changed unrelated original unknown operations");
             context.runOnClient(client -> check(work.dataset().equals(originalLocal) && work.state(glass).done() && !work.state(stone).done(), "Late shared result contaminated local rows"));
-            action(context, "Find projects"); context.waitFor(client -> !SharedClientNetworking.state().projects().isEmpty(), 600);
-            action(context, "Join: Material project"); context.waitFor(client -> work.shared().selected() && work.writable(), 600); back(context);
+            action(context, "Find projects"); joinDiscovered(context, materialReference.scope());
+            context.waitFor(client -> work.shared().selected() && work.writable(), 600); back(context);
             context.runOnClient(client -> check(work.state(stone).done() && work.state(glass).done(), "Explicit discovery/join did not restore server rows"));
             // Bind region rows to another project without replacing the material project reference.
             context.setScreen(() -> new GuiPlacementConfiguration(placement));
@@ -161,16 +176,47 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             click(context, context.computeOnClient(client -> regionButton(regionScreen, "First region", RegionDoneButton.class)));
             context.waitFor(client -> regions.writable() && regions.state(regionId).done(), 600);
             context.runOnClient(client -> check(regions.progress().equals(new Progress(1, 2, 50)), "Shared region native progress uses wrong definition"));
-            // Permission input goes through real registered admin payload and invalidates the current view.
-            action(context, "Share"); action(context, "Viewer access...");
-            UUID syntheticViewer = new UUID(4, 7); input(context, syntheticViewer.toString()); action(context, "Grant viewer");
+            // Participant administration uses native controls and the registered socket receiver.
+            action(context, "Share"); action(context, "Manage participants...");
+            context.runOnClient(client -> check(client.gui.screen().getClass().getSimpleName().equals("SharedMembershipScreen"),
+                "Manage participants did not open the native membership form"));
+            membershipGeometry(context);
+            UUID syntheticViewer = new UUID(4, 7); input(context, syntheticViewer.toString()); action(context, "Grant member");
             context.waitFor(client -> !regions.shared().writable() && regions.shared().snapshot() == null, 600);
             back(context); action(context, "Join / synchronize"); context.waitFor(client -> regions.writable(), 600);
-            context.runOnClient(client -> check(regions.shared().snapshot().viewers().contains(syntheticViewer), "Native viewer grant not saved by server"));
-            action(context, "Viewer access..."); input(context, syntheticViewer.toString()); action(context, "Remove viewer");
+            context.runOnClient(client -> check(regions.shared().snapshot().role(syntheticViewer) == ProjectRole.MEMBER,
+                "Native Member grant not saved by authenticated server"));
+            action(context, "Manage participants..."); input(context, syntheticViewer.toString()); action(context, "Promote administrator");
             context.waitFor(client -> !regions.writable() && regions.shared().snapshot() == null, 600);
             back(context); action(context, "Join / synchronize"); context.waitFor(client -> regions.writable(), 600);
-            context.runOnClient(client -> check(!regions.shared().snapshot().viewers().contains(syntheticViewer), "Native viewer removal not saved by server")); back(context);
+            context.runOnClient(client -> check(regions.shared().snapshot().role(syntheticViewer) == ProjectRole.ADMINISTRATOR,
+                "Native Administrator promotion not saved"));
+            action(context, "Manage participants..."); input(context, syntheticViewer.toString()); action(context, "Remove participant");
+            context.waitFor(client -> !regions.writable() && regions.shared().snapshot() == null, 600);
+            back(context); action(context, "Join / synchronize"); context.waitFor(client -> regions.writable(), 600);
+            context.runOnClient(client -> check(regions.shared().snapshot().role(syntheticViewer) == null,
+                "Native participant removal not saved"));
+            action(context, "Manage participants...");
+            assertMembershipNoOp(context, server, regions, context.computeOnClient(client -> client.player.getUUID()),
+                "Promote administrator");
+            assertMembershipNoOp(context, server, regions, syntheticViewer, "Remove participant");
+            context.runOnClient(client -> ((SharedUiAccess.MembershipInput) client.gui.screen()).input()
+                .setValueWrapper(client.player.getUUID().toString()));
+            var regionScope = context.computeOnClient(client -> regions.shared().reference().scope());
+            var beforeLastAdmin = server.computeOnServer(SharedServerNetworking::service)
+                .join(context.computeOnClient(client -> client.player.getUUID()), regionScope)
+                .toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value();
+            action(context, "Remove participant");
+            context.waitFor(client -> regions.shared().feedback().equals(SharedWorkBackend.text("result.INVALID_INPUT")), 600);
+            check(beforeLastAdmin.equals(server.computeOnServer(SharedServerNetworking::service)
+                .join(context.computeOnClient(client -> client.player.getUUID()), beforeLastAdmin.scope())
+                .toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value()),
+                "Last Administrator refusal changed authoritative membership or revision");
+            back(context); action(context, "Join / synchronize"); context.waitFor(client -> regions.writable(), 600);
+            context.runOnClient(client -> check(regions.shared().role() == ProjectRole.ADMINISTRATOR,
+                "Native last Administrator removal was accepted")); back(context);
+            regionMember(context, server, regionScreen, regions);
+            compactMembershipAndRevocation(context, server, regionScreen, regions, config, placementId);
             context.setScreen(() -> screen); context.waitFor(client -> !work.pending());
             context.runOnClient(client -> check(!work.writable(), "A different live region subscription made material binding writable"));
             action(context, "Refresh work"); context.waitFor(client -> work.writable(), 600);
@@ -181,6 +227,8 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             geometry(context, screen, work, regionScreen, regions);
             context.setScreen(() -> screen); action(context, "Refresh work"); context.waitFor(client -> work.writable(), 600);
             if (SharedUiRaceChecks.enabled("admission")) SharedUiRaceChecks.falseAdmission(context, work, store, config, placementId);
+            definitionConfirmationContext(context, server, screen, work);
+            definitionRepair(context, server, screen, placement, materials, work);
             viewerAndUnavailable(context, server, screen, work, placement, store, placementId);
             check(Arrays.equals(localBytes, Files.readAllBytes(localFile)), "Shared flow rewrote original local file bytes");
             check(Arrays.equals(schematic, Files.readAllBytes(placement.getSchematicFile())), "Shared flow changed source schematic bytes");
@@ -191,6 +239,104 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         check(SharedSourceLoading.awaitClosed(10, java.util.concurrent.TimeUnit.SECONDS), "Loaded source worker did not close");
         org.slf4j.LoggerFactory.getLogger("mcmateriallist-shared-ui-test").info("Shared native UI all assertions PASS");
       } catch (Exception failure) { throw new AssertionError("Shared native UI fixture failed", failure); }
+    }
+    private static void definitionConfirmationContext(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server,
+            GuiMaterialList screen, MaterialWorkSession work) throws Exception {
+        var actor = context.computeOnClient(client -> client.player.getUUID());
+        var service = server.computeOnServer(SharedServerNetworking::service);
+        var original = context.computeOnClient(client -> work.shared().snapshot());
+        var created = service.create(actor, original.scope().worldNamespace(), "Definition confirmation fixture",
+            original.manifest().definition()).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        check(created.status() == SharedEvents.Status.OK, "Definition confirmation fixture creation failed");
+        var second = created.value();
+        action(context, "Share"); action(context, "Update shared definition...");
+        context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Confirm global update"),
+            "Definition confirmation did not arm on the original project"));
+        action(context, "Find projects");
+        joinDiscovered(context, second.scope());
+        context.waitFor(client -> work.shared().snapshot() != null && work.shared().snapshot().scope().equals(second.scope())
+            && work.writable(), 600);
+        context.runOnClient(client -> ((SharedWorkScreen) client.gui.screen()).initGui());
+        context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Update shared definition...")
+            && !hasButton((GuiBase) client.gui.screen(), "Confirm global update"),
+            "Definition confirmation from the original project remained armed after joining another project"));
+        action(context, "Update shared definition...");
+        check(second.equals(service.join(actor, second.scope()).toCompletableFuture()
+            .get(10, java.util.concurrent.TimeUnit.SECONDS).value()),
+            "First definition click on the second project wrote a global definition");
+        var stone = new MaterialTaskId("minecraft:stone");
+        check(second.rows().containsKey(stone), "Same-scope confirmation fixture lacks stone row");
+        var changed = service.command(actor, new SharedCommand(second.scope(), stone, UUID.randomUUID(),
+            second.rows().get(stone).rowVersion(), second.manifest().version(),
+            new SharedCommand.SetNote("Confirmation cursor fixture")))
+            .toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        check(changed.result().status() == SharedEvents.Status.OK,
+            "Same-scope confirmation fixture command did not commit");
+        server.runOnServer(serverInstance -> SharedServerNetworking.publishEvents(serverInstance, changed.events()));
+        context.waitFor(client -> work.shared().snapshot() != null && work.shared().snapshot().scope().equals(second.scope())
+            && work.shared().snapshot().projectRevision() == changed.result().projectRevision() && work.writable(), 600);
+        context.runOnClient(client -> {
+            ((SharedWorkScreen) client.gui.screen()).initGui();
+            check(hasButton((GuiBase) client.gui.screen(), "Update shared definition...")
+                && !hasButton((GuiBase) client.gui.screen(), "Confirm global update"),
+                "Definition confirmation remained armed after same-project cursor change");
+        });
+        action(context, "Find projects");
+        joinDiscovered(context, original.scope());
+        context.waitFor(client -> work.shared().snapshot() != null && work.shared().snapshot().scope().equals(original.scope())
+            && work.writable(), 600);
+        context.runOnClient(client -> {
+            ((SharedWorkScreen) client.gui.screen()).initGui();
+            check(hasButton((GuiBase) client.gui.screen(), "Update shared definition..."),
+                "Second-project definition confirmation remained armed after returning to original project");
+        });
+        check(original.equals(service.join(actor, original.scope()).toCompletableFuture()
+            .get(10, java.util.concurrent.TimeUnit.SECONDS).value()),
+            "Cross-project definition confirmation changed the original project");
+        back(context);
+        context.setScreen(() -> screen);
+    }
+    private static void definitionRepair(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server,
+            GuiMaterialList screen, SchematicPlacement placement, fi.dy.masa.litematica.materials.MaterialListBase materials,
+            MaterialWorkSession work) throws Exception {
+        var actor = context.computeOnClient(client -> client.player.getUUID());
+        var service = server.computeOnServer(SharedServerNetworking::service);
+        var before = context.computeOnClient(client -> work.shared().snapshot());
+        byte[] source = Files.readAllBytes(placement.getSchematicFile());
+        var origin = placement.getOrigin();
+        context.runOnClient(client -> { placement.setOrigin(origin.above(), screen); materials.reCreateMaterialList(); });
+        context.waitFor(client -> NativeSharedCapture.capture(placement, materials, true).ok(), 600);
+        context.runOnClient(client -> check(!work.writable() && work.shared().canUpdateDefinition(),
+            "Old baseline mismatch blocked authorized explicit definition repair"));
+        action(context, "Share"); action(context, "Update shared definition..."); action(context, "Confirm global update");
+        context.waitFor(client -> work.shared().snapshot() == null && !work.shared().pending(), 600);
+        action(context, "Join / synchronize"); context.waitFor(client -> work.writable(), 600);
+        var repaired = context.computeOnClient(client -> work.shared().snapshot());
+        check(repaired.manifest().version() == before.manifest().version() + 1
+            && repaired.manifest().definition().baseline().origin().equals(new Vector3(placement.getOrigin().getX(),
+                placement.getOrigin().getY(), placement.getOrigin().getZ()))
+            && repaired.manifest().definition().materials().equals(before.manifest().definition().materials())
+            && repaired.rows().equals(before.rows()), "Native full definition repair changed task state or lost global counts");
+        back(context);
+        context.runOnClient(client -> { placement.setOrigin(origin, screen); materials.reCreateMaterialList(); });
+        context.waitFor(client -> NativeSharedCapture.capture(placement, materials, true).ok(), 600);
+        action(context, "Share"); action(context, "Update shared definition..."); action(context, "Confirm global update");
+        context.waitFor(client -> work.shared().snapshot() == null && !work.shared().pending(), 600);
+        action(context, "Join / synchronize"); context.waitFor(client -> work.writable(), 600); back(context);
+        var restored = context.computeOnClient(client -> work.shared().snapshot());
+        check(restored.rows().equals(before.rows()) && restored.manifest().definition().equals(before.manifest().definition()),
+            "Restored definition changed task state, material counts or region descriptors");
+        context.runOnClient(client -> { placement.toggleSubRegionEnabled("Second region", screen); materials.reCreateMaterialList(); });
+        context.waitFor(client -> work.ready() && !NativeSharedCapture.capture(placement, materials, true).ok(), 600);
+        context.runOnClient(client -> { check(work.shared().canUpdateDefinition(), "Partial count fixture did not reach native update control"); work.shared().updateDefinition(); });
+        context.waitFor(client -> work.shared().feedback().equals(SharedWorkBackend.text("full_recount_required")), 600);
+        check(service.join(actor, before.scope()).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value().equals(restored),
+            "Partial native count became a shared definition");
+        context.runOnClient(client -> { placement.toggleSubRegionEnabled("Second region", screen); materials.reCreateMaterialList(); });
+        context.waitFor(client -> NativeSharedCapture.capture(placement, materials, true).ok(), 600);
+        check(Arrays.equals(source, Files.readAllBytes(placement.getSchematicFile())), "Definition repair changed saved source bytes");
     }
     private static void observations(ClientGameTestContext context, GuiMaterialList screen, MaterialWorkSession work,
             SchematicPlacement placement) throws java.io.IOException {
@@ -279,7 +425,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
     }
     private static void geometry(GuiBase screen) {
         var controls = ((GuiButtonsAccess) screen).mcmateriallist$buttons();
-        var added = screen instanceof SharedWorkScreen || screen instanceof SharedInputScreen ? controls
+        var added = screen instanceof SharedWorkScreen || screen instanceof SharedInputScreen || screen instanceof SharedMembershipScreen ? controls
             : controls.stream().filter(button -> button.getHoverStrings().contains(SharedWorkBackend.text("title"))).toList();
         check(!added.isEmpty(), "No shared controls in geometry check");
         for (var control : added) {
@@ -296,6 +442,254 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         return ChatFormatting.stripFormatting(((SharedUiAccess.Button) button).label()) + "[" + button.getX() + ","
             + button.getY() + "," + button.getWidth() + "," + button.getHeight() + "]";
     }
+    private static void assertMembershipNoOp(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server,
+            RegionWorkSession regions, UUID target, String action) throws Exception {
+        UUID actor = context.computeOnClient(client -> client.player.getUUID());
+        ProjectScope scope = context.computeOnClient(client -> regions.shared().reference().scope());
+        var service = server.computeOnServer(SharedServerNetworking::service);
+        var before = service.join(actor, scope).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value();
+        Path worldRoot = server.computeOnServer(mc -> mc.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT));
+        var store = new dev.mcmateriallist.core.shared.persistence.SharedProjectStore(worldRoot);
+        long generation = store.load(scope.worldNamespace(), scope.projectId()).value().generation();
+        Path primary = worldRoot.resolve("mcmateriallist-shared").resolve("project-" + scope.projectId() + ".json");
+        Path backup = primary.resolveSibling(primary.getFileName() + ".bak");
+        byte[] primaryBytes = Files.readAllBytes(primary), backupBytes = Files.exists(backup) ? Files.readAllBytes(backup) : null;
+        context.runOnClient(client -> ((SharedUiAccess.MembershipInput) client.gui.screen()).input().setValueWrapper(target.toString()));
+        action(context, action);
+        context.waitTicks(40);
+        var after = service.join(actor, scope).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value();
+        check(before.equals(after) && generation == store.load(scope.worldNamespace(), scope.projectId()).value().generation()
+            && Arrays.equals(primaryBytes, Files.readAllBytes(primary))
+            && Arrays.equals(backupBytes, Files.exists(backup) ? Files.readAllBytes(backup) : null),
+            "Native no-op membership changed server revision, generation, or bytes: " + action);
+        context.runOnClient(client -> check(regions.writable() && regions.shared().snapshot() != null
+            && regions.shared().snapshot().equals(before) && SharedClientNetworking.state().synchronizedState(),
+            "Native no-op membership dropped confirmed cache or writable state: " + action));
+    }
+    private static void membershipGeometry(ClientGameTestContext context) throws Exception {
+        var form = context.computeOnClient(client -> (SharedMembershipScreen) client.gui.screen());
+        for (String language : List.of("en_us", "ja_jp")) {
+            if (language.equals("ja_jp")) {
+                var reload = context.computeOnClient(client -> {
+                    client.getLanguageManager().setSelected(language); return client.reloadResourcePacks();
+                });
+                context.waitFor(client -> reload.isDone(), 600); reload.join();
+            }
+            for (String size : List.of("large", "medium", "small")) {
+                int pixelsWide = size.equals("large") ? 1920 : size.equals("medium") ? 1440 : 1280;
+                int pixelsHigh = size.equals("large") ? 1080 : size.equals("medium") ? 810 : 720;
+                context.getInput().resizeWindow(pixelsWide, pixelsHigh);
+                context.runOnClient(client -> { client.options.guiScale().set(size.equals("small") ? 4 : 3); client.resizeGui(); });
+                context.setScreen(() -> form); context.waitFor(client -> client.gui.overlay() == null);
+                context.runOnClient(client -> geometry(form));
+                capture(context, form, "issue6-participants-" + language + "-" + size);
+            }
+        }
+        var english = context.computeOnClient(client -> {
+            client.getLanguageManager().setSelected("en_us"); return client.reloadResourcePacks();
+        });
+        context.waitFor(client -> english.isDone(), 600); english.join();
+        context.getInput().resizeWindow(1920, 1080);
+        context.runOnClient(client -> { client.options.guiScale().set(3); client.resizeGui(); });
+        context.setScreen(() -> form); context.waitFor(client -> client.gui.overlay() == null);
+    }
+    private static void regionMember(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server,
+            GuiPlacementConfiguration screen, RegionWorkSession regions) throws Exception {
+        var prior = context.computeOnClient(client -> regions.shared().snapshot());
+        UUID creator = new UUID(9, 12), actor = context.computeOnClient(client -> client.player.getUUID());
+        var service = server.computeOnServer(SharedServerNetworking::service);
+        var created = service.create(creator, prior.scope().worldNamespace(), "Region member fixture",
+            prior.manifest().definition()).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value();
+        var other = created.manifest().regions().entrySet().stream()
+            .filter(entry -> entry.getValue().key().equals("First region")).map(Map.Entry::getKey)
+            .findFirst().orElseThrow(() -> new AssertionError("Created region fixture omitted First region"));
+        var assigned = service.command(creator, new SharedCommand(created.scope(), other, UUID.randomUUID(), 0, 0,
+            new SharedCommand.Assign(creator))).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        check(assigned.result().status() == SharedEvents.Status.OK && assigned.result().projectRevision() == 1,
+            "Region fixture assignment did not commit in its new project");
+        var granted = service.setMembership(creator, created.scope(), 1, actor, ProjectRole.MEMBER)
+            .toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        check(granted.status() == SharedEvents.Status.OK && granted.value().role(actor) == ProjectRole.MEMBER
+            && granted.value().projectRevision() == 2, "Region fixture Member grant did not commit");
+        context.setScreen(() -> screen);
+        action(context, "Share"); action(context, "Find projects");
+        joinDiscovered(context, created.scope());
+        context.waitFor(client -> regions.shared().snapshot() != null && regions.shared().snapshot().scope().equals(created.scope())
+            && !regions.pending(), 600);
+        back(context);
+        context.runOnClient(client -> {
+            screen.initGui();
+            check(!((SharedUiAccess.Button) regionButton(screen, "First region", RegionDoneButton.class)).enabled()
+                && ((SharedUiAccess.Button) regionButton(screen, "Second region", RegionDoneButton.class)).enabled(),
+                "Region Member other-task Done was enabled or own unassigned Done disabled");
+        });
+        click(context, context.computeOnClient(client -> regionButton(screen, "Second region", RegionDoneButton.class)));
+        context.waitFor(client -> regions.writable() && regions.state(regions.id("Second region")).done()
+            && actor.equals(regions.state(regions.id("Second region")).assignee()), 600);
+        click(context, context.computeOnClient(client -> regionButton(screen, "Second region", RegionHeadButton.class)));
+        context.waitForScreen(RegionDetailScreen.class);
+        context.runOnClient(client -> check(((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Release")).enabled()
+            && ((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Save note")).enabled()
+            && !((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Assign...")).enabled(),
+            "Region Member own controls or privileged Assign affordance were wrong"));
+        clickField(context, context.computeOnClient(client -> ((SharedUiAccess.RegionDetail) client.gui.screen()).note()));
+        context.getInput().typeChars("Region member note"); action(context, "Save note");
+        context.waitFor(client -> regions.state(regions.id("Second region")).note().equals("Region member note"), 600);
+        action(context, "Release");
+        context.waitFor(client -> regions.state(regions.id("Second region")).assignee() == null, 600);
+        back(context);
+        context.runOnClient(client -> {
+            screen.initGui();
+            check(!((SharedUiAccess.Button) regionButton(screen, "Second region", RegionDoneButton.class)).enabled(),
+                "Region Member could undo completed unassigned row without Claim");
+        });
+        click(context, context.computeOnClient(client -> regionButton(screen, "First region", RegionHeadButton.class)));
+        context.waitForScreen(RegionDetailScreen.class);
+        context.runOnClient(client -> check(!((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Save note")).enabled()
+            && !((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Release")).enabled()
+            && !((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Assign...")).enabled(),
+            "Region Member other-task native edits were enabled"));
+        back(context);
+        action(context, "Share"); action(context, "Find projects");
+        joinDiscovered(context, prior.scope());
+        context.waitFor(client -> regions.shared().snapshot() != null && regions.shared().snapshot().scope().equals(prior.scope())
+            && !regions.pending(), 600);
+        back(context);
+    }
+    private static void compactMembershipAndRevocation(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server,
+            GuiPlacementConfiguration screen, RegionWorkSession regions, Path config,
+            dev.mcmateriallist.core.LocalPlacementId placementId) throws Exception {
+        var original = context.computeOnClient(client -> regions.shared().snapshot());
+        UUID creator = new UUID(10, 1), actor = context.computeOnClient(client -> client.player.getUUID());
+        var service = server.computeOnServer(SharedServerNetworking::service);
+        var project = service.create(creator, original.scope().worldNamespace(), "Compact participants fixture",
+            original.manifest().definition()).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value();
+        var granted = service.setMembership(creator, project.scope(), 0, actor, ProjectRole.ADMINISTRATOR)
+            .toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        check(granted.status() == SharedEvents.Status.OK, "Compact fixture administrator grant failed");
+        var roster = granted.value();
+        for (int i = 0; i < 6; i++) {
+            granted = service.setMembership(creator, project.scope(), roster.projectRevision(), new UUID(10, i + 2), ProjectRole.VIEWER)
+                .toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+            check(granted.status() == SharedEvents.Status.OK, "Compact fixture roster grant failed");
+            roster = granted.value();
+        }
+        var ordered = roster.members().keySet().stream().sorted(Comparator.comparing(UUID::toString)).toList();
+        check(ordered.size() == 8, "Compact fixture lacks a second participant page");
+        var expectedSecondPage = ordered.get(5);
+        var localBefore = new SharedClientStore(config).load(placementId).value().regions().localDataset();
+        context.setScreen(() -> screen); action(context, "Share"); action(context, "Find projects");
+        joinDiscovered(context, project.scope());
+        context.waitFor(client -> regions.shared().snapshot() != null && regions.shared().snapshot().scope().equals(project.scope())
+            && regions.shared().role() == ProjectRole.ADMINISTRATOR && !regions.pending(), 600);
+        action(context, "Manage participants..."); context.waitForScreen(SharedMembershipScreen.class);
+        var form = context.computeOnClient(client -> (SharedMembershipScreen) client.gui.screen());
+        context.getInput().resizeWindow(1280, 720);
+        context.runOnClient(client -> { client.options.guiScale().set(4); client.resizeGui(); });
+        context.setScreen(() -> form); context.waitTick();
+        context.runOnClient(client -> {
+            check(form.getScreenWidth() <= 430 && form.getScreenHeight() < 250,
+                "Compact participant fixture did not reach a small logical screen: "
+                    + form.getScreenWidth() + "x" + form.getScreenHeight());
+            geometry(form);
+        });
+        boolean chooser = context.computeOnClient(client -> hasButton(form, "Choose participant"));
+        capture(context, form, "issue6-participants-compact-en-edit");
+        boolean selectedFromSecondPage = false;
+        if (chooser) {
+            action(context, "Choose participant"); context.waitTick();
+            context.runOnClient(client -> geometry(form));
+            capture(context, form, "issue6-participants-compact-en-list");
+            action(context, "Next page"); context.waitTick();
+            context.runOnClient(client -> geometry(form));
+            capture(context, form, "issue6-participants-compact-en-list-page-2");
+            click(context, context.computeOnClient(client -> ((GuiButtonsAccess) (GuiBase) form).mcmateriallist$buttons().stream()
+                .filter(button -> button.getX() == 12 && button.getY() == 50 && button.getWidth() >= form.getScreenWidth() - 30)
+                .findFirst().orElseThrow(() -> new AssertionError("Compact second-page participant row missing"))));
+            selectedFromSecondPage = context.computeOnClient(client -> expectedSecondPage.toString()
+                .equals(((SharedUiAccess.MembershipInput) (GuiBase) form).input().getValueWrapper())
+                && hasButton(form, "Choose participant"));
+        }
+        var japanese = context.computeOnClient(client -> { client.getLanguageManager().setSelected("ja_jp"); return client.reloadResourcePacks(); });
+        context.waitFor(client -> japanese.isDone(), 600); japanese.join(); context.setScreen(() -> form);
+        context.waitFor(client -> client.gui.overlay() == null);
+        context.runOnClient(client -> geometry(form));
+        capture(context, form, "issue6-participants-compact-ja-edit");
+        if (chooser) {
+            action(context, "参加者を選ぶ"); context.waitTick();
+            context.runOnClient(client -> geometry(form));
+            capture(context, form, "issue6-participants-compact-ja-list");
+            action(context, "編集に戻る");
+        }
+        var english = context.computeOnClient(client -> { client.getLanguageManager().setSelected("en_us"); return client.reloadResourcePacks(); });
+        context.waitFor(client -> english.isDone(), 600); english.join();
+        context.getInput().resizeWindow(1920, 1080);
+        context.runOnClient(client -> { client.options.guiScale().set(3); client.resizeGui(); });
+        context.setScreen(() -> form); context.waitFor(client -> client.gui.overlay() == null);
+        click(context, context.computeOnClient(client -> ((GuiButtonsAccess) (GuiBase) form).mcmateriallist$buttons().stream()
+            .filter(button -> button.getX() == 12 && button.getY() == 150 && button.getWidth() >= form.getScreenWidth() - 30)
+            .findFirst().orElseThrow(() -> new AssertionError("Large participant row missing"))));
+        boolean largeSelection = context.computeOnClient(client -> ordered.get(0).toString()
+            .equals(((SharedUiAccess.MembershipInput) (GuiBase) form).input().getValueWrapper()));
+        check(largeSelection, "Large participant row did not fill the UUID field");
+        var removed = service.setMembership(creator, project.scope(), roster.projectRevision(), actor, null)
+            .toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        check(removed.status() == SharedEvents.Status.OK, "Compact fixture actor revocation failed");
+        server.runOnServer(serverInstance -> SharedServerNetworking.publishEvents(serverInstance, removed.events()));
+        context.waitFor(client -> SharedClientNetworking.state().status() == SharedClientState.Status.REVOKED
+            && regions.shared().snapshot() == null, 600);
+        context.waitTick();
+        var privateIds = ordered.stream().map(UUID::toString).toList();
+        boolean cleared = context.computeOnClient(client -> {
+            if (client.gui.screen() != form || !((SharedUiAccess.MembershipInput) (GuiBase) form).input().getValueWrapper().isEmpty()) return false;
+            var controls = ((GuiButtonsAccess) (GuiBase) form).mcmateriallist$buttons();
+            return controls.stream().noneMatch(button -> privateIds.stream().anyMatch(id ->
+                ((SharedUiAccess.Button) button).label().contains(id)
+                    || button.getHoverStrings().stream().anyMatch(hover -> hover.contains(id))))
+                && !((SharedUiAccess.Button) button(form, "Grant member")).enabled();
+        });
+        capture(context, form, "issue6-participants-after-revocation");
+        check(Objects.equals(localBefore, new SharedClientStore(config).load(placementId).value().regions().localDataset()),
+            "Participant revocation changed original Local region binding");
+        check(chooser && selectedFromSecondPage && cleared,
+            "Compact participant selection/paging or first-render revoked-form privacy failed: chooser=" + chooser
+                + ", selected=" + selectedFromSecondPage + ", cleared=" + cleared);
+        back(context); action(context, "Find projects");
+        joinDiscovered(context, original.scope());
+        context.waitFor(client -> regions.shared().snapshot() != null && regions.shared().snapshot().scope().equals(original.scope())
+            && !regions.pending(), 600);
+        back(context);
+    }
+    private static boolean hasButton(GuiBase screen, String label) {
+        return ((GuiButtonsAccess) screen).mcmateriallist$buttons().stream()
+            .anyMatch(button -> label.equals(ChatFormatting.stripFormatting(((SharedUiAccess.Button) button).label())));
+    }
+    private static void joinDiscovered(ClientGameTestContext context, ProjectScope scope) {
+        context.waitFor(client -> SharedClientNetworking.state().projects().stream()
+            .anyMatch(project -> project.scope().equals(scope)), 600);
+        String label = context.computeOnClient(client -> SharedClientNetworking.state().projects().stream()
+            .filter(project -> project.scope().equals(scope)).map(project -> SharedWorkBackend.text("join", project.name()))
+            .findFirst().orElseThrow(() -> new AssertionError("Target project is absent from discovery")));
+        int discovered = context.computeOnClient(client -> SharedClientNetworking.state().projects().size());
+        context.runOnClient(client -> {
+            check(client.gui.screen() instanceof SharedWorkScreen, "Project join requires the native management screen");
+            ((SharedWorkScreen) client.gui.screen()).initGui();
+        });
+        // The native list has at least one project per page; the discovered count bounds a full traversal.
+        for (int visited = 0; visited < discovered; visited++) {
+            if (context.computeOnClient(client -> hasButton((GuiBase) client.gui.screen(), label))) {
+                action(context, label);
+                return;
+            }
+            context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Next page"),
+                "Discovered project is not on this page and native pagination is unavailable"));
+            action(context, "Next page");
+        }
+        throw new AssertionError("Discovered project was not reachable through bounded native pages");
+    }
     private static void viewerAndUnavailable(ClientGameTestContext context,
             net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server,
             GuiMaterialList screen, MaterialWorkSession work, SchematicPlacement placement, SharedClientStore store,
@@ -305,18 +699,72 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         var service = server.computeOnServer(SharedServerNetworking::service);
         var created = service.create(creator, prior.scope().worldNamespace(), "Viewer fixture project", prior.manifest().definition()).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value();
         var stone = new MaterialTaskId("minecraft:stone");
+        var glass = new MaterialTaskId("minecraft:glass");
         service.command(creator, new SharedCommand(created.scope(), stone, UUID.randomUUID(), 0, 0,
+            new SharedCommand.Assign(creator))).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        service.command(creator, new SharedCommand(created.scope(), stone, UUID.randomUUID(), 1, 0,
             new SharedCommand.SetNote("Private viewer fixture note"))).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
-        service.setViewer(creator, created.scope(), 1, actor, true).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        service.setMembership(creator, created.scope(), 2, actor, ProjectRole.MEMBER).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
         action(context, "Share"); action(context, "Find projects");
         context.waitFor(client -> SharedClientNetworking.state().projects().stream().anyMatch(project -> project.scope().equals(created.scope())), 600);
-        action(context, "Join: Viewer fixture project");
+        context.getInput().resizeWindow(1280, 720);
+        context.runOnClient(client -> { client.options.guiScale().set(4); client.resizeGui(); ((SharedWorkScreen) client.gui.screen()).initGui(); });
+        String viewerJoin = context.computeOnClient(client -> SharedClientNetworking.state().projects().stream()
+            .filter(project -> project.scope().equals(created.scope())).map(project -> SharedWorkBackend.text("join", project.name()))
+            .findFirst().orElseThrow(() -> new AssertionError("Viewer fixture omitted from discovered projects")));
+        context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Next page"),
+            "Viewer fixture did not exercise native project pagination"));
+        if (context.computeOnClient(client -> hasButton((GuiBase) client.gui.screen(), viewerJoin))) action(context, "Next page");
+        context.runOnClient(client -> check(!hasButton((GuiBase) client.gui.screen(), viewerJoin),
+            "Viewer fixture pagination check did not start away from the target"));
+        joinDiscovered(context, created.scope());
+        context.getInput().resizeWindow(1920, 1080);
+        context.runOnClient(client -> { client.options.guiScale().set(3); client.resizeGui(); });
         context.waitFor(client -> work.shared().snapshot() != null && work.shared().snapshot().scope().equals(created.scope()) && !work.pending(), 600);
+        back(context);
+        context.runOnClient(client -> {
+            screen.initGui();
+            check(!((SharedUiAccess.Button) rowButton(screen, stone, MaterialDoneButton.class)).enabled()
+                && ((SharedUiAccess.Button) rowButton(screen, glass, MaterialDoneButton.class)).enabled(),
+                "Member wrong-row Done was enabled or own unassigned Done disabled on first native frame");
+        });
+        click(context, context.computeOnClient(client -> rowButton(screen, glass, MaterialDoneButton.class)));
+        context.waitFor(client -> work.writable() && work.state(glass).done() && actor.equals(work.state(glass).assignee()), 600);
+        click(context, context.computeOnClient(client -> rowButton(screen, glass, MaterialHeadButton.class)));
+        context.waitForScreen(MaterialDetailScreen.class);
+        context.runOnClient(client -> check(((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Release")).enabled()
+            && ((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Save note")).enabled()
+            && !((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Assign...")).enabled(),
+            "Member own controls or privileged Assign affordance were wrong"));
+        clickField(context, context.computeOnClient(client -> ((SharedUiAccess.MaterialDetail) client.gui.screen()).note()));
+        context.getInput().typeChars("Member own note"); action(context, "Save note");
+        context.waitFor(client -> work.writable() && work.state(glass).note().equals("Member own note"), 600);
+        action(context, "Release"); context.waitFor(client -> work.writable() && work.state(glass).assignee() == null, 600);
+        back(context);
+        context.runOnClient(client -> {
+            screen.initGui();
+            check(!((SharedUiAccess.Button) rowButton(screen, glass, MaterialDoneButton.class)).enabled(),
+                "Member could undo a completed unassigned row without Claim");
+        });
+        click(context, context.computeOnClient(client -> rowButton(screen, stone, MaterialHeadButton.class)));
+        context.waitForScreen(MaterialDetailScreen.class);
+        context.runOnClient(client -> check(!((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Save note")).enabled()
+            && !((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Release")).enabled()
+            && !((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "Assign...")).enabled(),
+            "Member other-task native edits were enabled"));
+        back(context);
+        long revision = service.join(creator, created.scope()).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value().projectRevision();
+        var demoted = service.setMembership(creator, created.scope(), revision, actor, ProjectRole.VIEWER).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        server.runOnServer(serverInstance -> SharedServerNetworking.publishEvents(serverInstance, demoted.events()));
+        context.waitFor(client -> !work.pending() && work.shared().snapshot() == null, 600);
+        action(context, "Share"); action(context, "Join / synchronize");
+        context.waitFor(client -> work.shared().snapshot() != null && work.shared().role() == ProjectRole.VIEWER, 600);
         context.runOnClient(client -> check(!work.writable() && work.shared().feedback().equals(SharedWorkBackend.text("viewer")), "Native Viewer was writable or mislabeled"));
         back(context); click(context, context.computeOnClient(client -> rowButton(screen, stone, MaterialHeadButton.class)));
         context.waitForScreen(MaterialDetailScreen.class);
         context.runOnClient(client -> check(((SharedUiAccess.MaterialDetail) client.gui.screen()).note().getValueWrapper().equals("Private viewer fixture note"), "Viewer snapshot omitted authorized note"));
-        var removed = service.setViewer(creator, created.scope(), 2, actor, false).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
+        revision = service.join(creator, created.scope()).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value().projectRevision();
+        var removed = service.setMembership(creator, created.scope(), revision, actor, null).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
         server.runOnServer(serverInstance -> SharedServerNetworking.publishEvents(serverInstance, removed.events()));
         context.waitFor(client -> SharedClientNetworking.state().status() == SharedClientState.Status.REVOKED && !work.pending(), 600);
         context.waitTick();
@@ -356,7 +804,9 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         action(context, "New project..."); context.waitForScreen(SharedInputScreen.class); input(context, name); action(context, "Create empty work");
     }
     private static void input(ClientGameTestContext context, String text) {
-        clickField(context, context.computeOnClient(client -> ((SharedUiAccess.Input) client.gui.screen()).input())); context.getInput().typeChars(text);
+        clickField(context, context.computeOnClient(client -> client.gui.screen() instanceof SharedMembershipScreen
+            ? ((SharedUiAccess.MembershipInput) client.gui.screen()).input()
+            : ((SharedUiAccess.Input) client.gui.screen()).input())); context.getInput().typeChars(text);
     }
     static ButtonBase rowButton(GuiMaterialList screen, MaterialTaskId id, Class<? extends ButtonBase> type) {
         var row = ((SharedUiAccess.Rows) ((SharedUiAccess.ListScreen) screen).list()).rows().stream()

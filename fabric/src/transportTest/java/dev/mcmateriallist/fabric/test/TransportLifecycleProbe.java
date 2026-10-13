@@ -1,6 +1,8 @@
 package dev.mcmateriallist.fabric.test;
 import dev.mcmateriallist.core.shared.*;
 import dev.mcmateriallist.core.shared.protocol.SharedMessage;
+import dev.mcmateriallist.core.shared.transport.BoundedOutgoing;
+import dev.mcmateriallist.fabric.shared.SharedServerNetworking;
 import dev.mcmateriallist.fabric.test.mixin.*;
 import net.minecraft.server.MinecraftServer;
 import java.util.*;
@@ -11,6 +13,8 @@ public final class TransportLifecycleProbe {
     private static final Map<SharedProjectService, SharedProcessorControl> PROCESSORS = new IdentityHashMap<>();
     private static UUID pending;
     private static Runnable callback;
+    private static Runnable startedCallback;
+    private static SharedProcessorControl actual;
     private TransportLifecycleProbe() {}
     public static synchronized void register(SharedProjectService service, SharedProcessorControl control) {
         if (PROCESSORS.size() >= 4) throw new AssertionError("Test runtime observation capacity");
@@ -23,6 +27,22 @@ public final class TransportLifecycleProbe {
         callback = value; return true;
     }
     public static synchronized boolean held() { return callback != null; }
+    public static synchronized boolean holdStarted(UUID token, Runnable value) {
+        if (actual == null || !token.equals(pending)) return false;
+        if (startedCallback != null) throw new AssertionError("Duplicate test subscription start");
+        startedCallback = value; return true;
+    }
+    public static synchronized boolean startedHeld() { return startedCallback != null; }
+    public static synchronized boolean subscribed(ProjectScope scope) {
+        if (actual == null || pending == null) throw new AssertionError("Actual subscription gate missing");
+        return scope.equals(actual.subscriptions().get(pending));
+    }
+    public static void releaseStarted() {
+        Runnable value;
+        synchronized (TransportLifecycleProbe.class) { value = startedCallback; startedCallback = null; }
+        if (value == null) throw new AssertionError("Genuine test subscription start missing");
+        value.run();
+    }
     public static UUID start(SharedProjectService service, UUID creator, ProjectScope scope, SharedMessage message) {
         SharedProcessorControl control;
         UUID token = UUID.randomUUID();
@@ -37,6 +57,12 @@ public final class TransportLifecycleProbe {
         })) throw new AssertionError("Test wire queue capacity");
         return token;
     }
+    public static synchronized void holdNextActual(SharedProjectService service) {
+        SharedProcessorControl control = PROCESSORS.get(service);
+        if (pending != null || control == null || control.liveTokens().size() != 1)
+            throw new AssertionError("Test actual connection is not unique");
+        pending = control.liveTokens().iterator().next(); actual = control;
+    }
     public static CompletableFuture<Void> forgetInitiator(SharedProjectService service, UUID token) {
         SharedProcessorControl control;
         synchronized (TransportLifecycleProbe.class) { control = PROCESSORS.get(service); }
@@ -50,13 +76,31 @@ public final class TransportLifecycleProbe {
     }
     public static void release() {
         Runnable value;
-        synchronized (TransportLifecycleProbe.class) { value = callback; callback = null; pending = null; }
+        synchronized (TransportLifecycleProbe.class) {
+            if (startedCallback != null) throw new AssertionError("Subscription start still held");
+            value = callback; callback = null; pending = null; actual = null;
+        }
         if (value == null) throw new AssertionError("Genuine test completion missing");
         value.run();
+    }
+    public static void releaseActualIfHeld() {
+        Runnable started, completed;
+        synchronized (TransportLifecycleProbe.class) {
+            started = startedCallback; completed = callback;
+            startedCallback = callback = null; pending = null; actual = null;
+        }
+        try { if (started != null) started.run(); }
+        finally { if (completed != null) completed.run(); }
     }
     public static long slots(MinecraftServer server) {
         Object runtime = SharedServerAccess.runtimes().get(server);
         if (!(runtime instanceof SharedRuntimeCounts counts)) throw new AssertionError("Test runtime count bridge missing");
         return counts.connectionBudget().used();
+    }
+    public static BoundedOutgoing outgoing(MinecraftServer server) {
+        SharedProcessorControl control;
+        synchronized (TransportLifecycleProbe.class) { control = PROCESSORS.get(SharedServerNetworking.service(server)); }
+        if (control == null) throw new AssertionError("Test processor outgoing bridge missing");
+        return control.outgoing();
     }
 }
