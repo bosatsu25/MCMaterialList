@@ -155,8 +155,8 @@ public final class SharedUiClientTest implements FabricClientGameTest {
                 .allMatch(operation -> operation.confirmation() != null), "Late actual socket result did not settle original journal");
             check(store.load(placementId).value().operations().containsAll(unrelatedUnknowns), "Late baseline result changed unrelated original unknown operations");
             context.runOnClient(client -> check(work.dataset().equals(originalLocal) && work.state(glass).done() && !work.state(stone).done(), "Late shared result contaminated local rows"));
-            action(context, "Find projects"); context.waitFor(client -> !SharedClientNetworking.state().projects().isEmpty(), 600);
-            action(context, "Join: Material project"); context.waitFor(client -> work.shared().selected() && work.writable(), 600); back(context);
+            action(context, "Find projects"); joinDiscovered(context, materialReference.scope());
+            context.waitFor(client -> work.shared().selected() && work.writable(), 600); back(context);
             context.runOnClient(client -> check(work.state(stone).done() && work.state(glass).done(), "Explicit discovery/join did not restore server rows"));
             // Bind region rows to another project without replacing the material project reference.
             context.setScreen(() -> new GuiPlacementConfiguration(placement));
@@ -249,9 +249,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Confirm global update"),
             "Definition confirmation did not arm on the original project"));
         action(context, "Find projects");
-        context.waitFor(client -> SharedClientNetworking.state().projects().stream()
-            .anyMatch(project -> project.scope().equals(second.scope())), 600);
-        action(context, "Join: Definition confirmation fixture");
+        joinDiscovered(context, second.scope());
         context.waitFor(client -> work.shared().snapshot() != null && work.shared().snapshot().scope().equals(second.scope())
             && work.writable(), 600);
         context.runOnClient(client -> ((SharedWorkScreen) client.gui.screen()).initGui());
@@ -280,22 +278,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
                 "Definition confirmation remained armed after same-project cursor change");
         });
         action(context, "Find projects");
-        context.waitFor(client -> SharedClientNetworking.state().projects().stream()
-            .anyMatch(project -> project.scope().equals(original.scope())), 600);
-        String originalJoin = SharedWorkBackend.text("join", original.name());
-        context.runOnClient(client -> ((SharedWorkScreen) client.gui.screen()).initGui());
-        int projectPages = context.computeOnClient(client -> {
-            int rows = Math.max(1, (((GuiBase) client.gui.screen()).getScreenHeight() - 200) / 24);
-            return Math.max(1, (SharedClientNetworking.state().projects().size() + rows - 1) / rows);
-        });
-        for (int index = 0; index < projectPages && !context.computeOnClient(client -> hasButton((GuiBase) client.gui.screen(), originalJoin)); index++) {
-            context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Next page"),
-                "Original project is in discovery but native pagination is unavailable"));
-            action(context, "Next page");
-        }
-        context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), originalJoin),
-            "Original project is in discovery but not rendered on a native page"));
-        action(context, originalJoin);
+        joinDiscovered(context, original.scope());
         context.waitFor(client -> work.shared().snapshot() != null && work.shared().snapshot().scope().equals(original.scope())
             && work.writable(), 600);
         context.runOnClient(client -> {
@@ -502,9 +485,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             && granted.value().projectRevision() == 2, "Region fixture Member grant did not commit");
         context.setScreen(() -> screen);
         action(context, "Share"); action(context, "Find projects");
-        context.waitFor(client -> SharedClientNetworking.state().projects().stream()
-            .anyMatch(project -> project.scope().equals(created.scope())), 600);
-        action(context, "Join: Region member fixture");
+        joinDiscovered(context, created.scope());
         context.waitFor(client -> regions.shared().snapshot() != null && regions.shared().snapshot().scope().equals(created.scope())
             && !regions.pending(), 600);
         back(context);
@@ -542,9 +523,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             "Region Member other-task native edits were enabled"));
         back(context);
         action(context, "Share"); action(context, "Find projects");
-        context.waitFor(client -> SharedClientNetworking.state().projects().stream()
-            .anyMatch(project -> project.scope().equals(prior.scope())), 600);
-        action(context, "Join: Region project");
+        joinDiscovered(context, prior.scope());
         context.waitFor(client -> regions.shared().snapshot() != null && regions.shared().snapshot().scope().equals(prior.scope())
             && !regions.pending(), 600);
         back(context);
@@ -573,9 +552,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         var expectedSecondPage = ordered.get(5);
         var localBefore = new SharedClientStore(config).load(placementId).value().regions().localDataset();
         context.setScreen(() -> screen); action(context, "Share"); action(context, "Find projects");
-        context.waitFor(client -> SharedClientNetworking.state().projects().stream()
-            .anyMatch(candidate -> candidate.scope().equals(project.scope())), 600);
-        action(context, "Join: Compact participants fixture");
+        joinDiscovered(context, project.scope());
         context.waitFor(client -> regions.shared().snapshot() != null && regions.shared().snapshot().scope().equals(project.scope())
             && regions.shared().role() == ProjectRole.ADMINISTRATOR && !regions.pending(), 600);
         action(context, "Manage participants..."); context.waitForScreen(SharedMembershipScreen.class);
@@ -651,9 +628,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             "Compact participant selection/paging or first-render revoked-form privacy failed: chooser=" + chooser
                 + ", selected=" + selectedFromSecondPage + ", cleared=" + cleared);
         back(context); action(context, "Find projects");
-        context.waitFor(client -> SharedClientNetworking.state().projects().stream()
-            .anyMatch(candidate -> candidate.scope().equals(original.scope())), 600);
-        action(context, "Join: Region project");
+        joinDiscovered(context, original.scope());
         context.waitFor(client -> regions.shared().snapshot() != null && regions.shared().snapshot().scope().equals(original.scope())
             && !regions.pending(), 600);
         back(context);
@@ -661,6 +636,29 @@ public final class SharedUiClientTest implements FabricClientGameTest {
     private static boolean hasButton(GuiBase screen, String label) {
         return ((GuiButtonsAccess) screen).mcmateriallist$buttons().stream()
             .anyMatch(button -> label.equals(ChatFormatting.stripFormatting(((SharedUiAccess.Button) button).label())));
+    }
+    private static void joinDiscovered(ClientGameTestContext context, ProjectScope scope) {
+        context.waitFor(client -> SharedClientNetworking.state().projects().stream()
+            .anyMatch(project -> project.scope().equals(scope)), 600);
+        String label = context.computeOnClient(client -> SharedClientNetworking.state().projects().stream()
+            .filter(project -> project.scope().equals(scope)).map(project -> SharedWorkBackend.text("join", project.name()))
+            .findFirst().orElseThrow(() -> new AssertionError("Target project is absent from discovery")));
+        int discovered = context.computeOnClient(client -> SharedClientNetworking.state().projects().size());
+        context.runOnClient(client -> {
+            check(client.gui.screen() instanceof SharedWorkScreen, "Project join requires the native management screen");
+            ((SharedWorkScreen) client.gui.screen()).initGui();
+        });
+        // The native list has at least one project per page; the discovered count bounds a full traversal.
+        for (int visited = 0; visited < discovered; visited++) {
+            if (context.computeOnClient(client -> hasButton((GuiBase) client.gui.screen(), label))) {
+                action(context, label);
+                return;
+            }
+            context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Next page"),
+                "Discovered project is not on this page and native pagination is unavailable"));
+            action(context, "Next page");
+        }
+        throw new AssertionError("Discovered project was not reachable through bounded native pages");
     }
     private static void viewerAndUnavailable(ClientGameTestContext context,
             net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server,
@@ -679,7 +677,19 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         service.setMembership(creator, created.scope(), 2, actor, ProjectRole.MEMBER).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS);
         action(context, "Share"); action(context, "Find projects");
         context.waitFor(client -> SharedClientNetworking.state().projects().stream().anyMatch(project -> project.scope().equals(created.scope())), 600);
-        action(context, "Join: Viewer fixture project");
+        context.getInput().resizeWindow(1280, 720);
+        context.runOnClient(client -> { client.options.guiScale().set(4); client.resizeGui(); ((SharedWorkScreen) client.gui.screen()).initGui(); });
+        String viewerJoin = context.computeOnClient(client -> SharedClientNetworking.state().projects().stream()
+            .filter(project -> project.scope().equals(created.scope())).map(project -> SharedWorkBackend.text("join", project.name()))
+            .findFirst().orElseThrow(() -> new AssertionError("Viewer fixture omitted from discovered projects")));
+        context.runOnClient(client -> check(hasButton((GuiBase) client.gui.screen(), "Next page"),
+            "Viewer fixture did not exercise native project pagination"));
+        if (context.computeOnClient(client -> hasButton((GuiBase) client.gui.screen(), viewerJoin))) action(context, "Next page");
+        context.runOnClient(client -> check(!hasButton((GuiBase) client.gui.screen(), viewerJoin),
+            "Viewer fixture pagination check did not start away from the target"));
+        joinDiscovered(context, created.scope());
+        context.getInput().resizeWindow(1920, 1080);
+        context.runOnClient(client -> { client.options.guiScale().set(3); client.resizeGui(); });
         context.waitFor(client -> work.shared().snapshot() != null && work.shared().snapshot().scope().equals(created.scope()) && !work.pending(), 600);
         back(context);
         context.runOnClient(client -> {
