@@ -181,10 +181,10 @@ public final class SharedProjectService implements AutoCloseable {
         TaskState oldRow = before.rows().get(command.taskId()); TaskState nextRow = oldRow;
         if (oldRow == null || command.intent() instanceof SharedCommand.Assign assign && !before.canRead(assign.target()))
             return rejected(command, Status.INVALID_INPUT);
+        if (!ProjectPermissions.allows(before, actor, oldRow, command.intent())) return rejected(command, Status.DENIED);
         if (exhausted(archive)) return rejected(command, Status.CAPACITY);
         Status status = Status.OK;
         if (command.expectedManifestVersion() != before.manifest().version() || command.expectedRowVersion() != oldRow.rowVersion()) status = Status.CONFLICT;
-        else if (!ProjectPermissions.allows(before, actor, oldRow, command.intent())) return rejected(command, Status.DENIED);
         else {
             TransitionResult transition = transition(oldRow, command.intent(), actor);
             if (transition instanceof TransitionResult.Rejected) status = Status.CONFLICT;

@@ -119,6 +119,79 @@ class SharedPermissionsTest {
             }
         }
     }
+    @Test void staleUnauthorizedMaterialCommandsNeverWrite() throws Exception { staleUnauthorizedCommandsNeverWrite(false); }
+    @Test void staleUnauthorizedRegionCommandsNeverWrite() throws Exception { staleUnauthorizedCommandsNeverWrite(true); }
+    private void staleUnauthorizedCommandsNeverWrite(boolean region) throws Exception {
+        try (var service = new SharedProjectService(new SharedProjectStore(root))) {
+            var s = membership(service, owner, create(service), member, ProjectRole.MEMBER);
+            var updated = await(service.updateManifest(owner, s.scope(), s.projectRevision(), s.manifest().version(), definition(30, definition().regions().getFirst())));
+            assertEquals(OK, updated.status()); s = updated.value();
+            TaskId id = region ? both(s).get(1) : STONE;
+            assertEquals(OK, act(service, owner, s, id, new SharedCommand.Assign(owner)).result().status());
+            s = current(service, s);
+            var store = new SharedProjectStore(root);
+            var before = store.load(s.scope().worldNamespace(), s.scope().projectId()).value();
+            Path primary = file(s), backup = primary.resolveSibling(primary.getFileName() + ".bak");
+            byte[] primaryBytes = Files.readAllBytes(primary), backupBytes = Files.readAllBytes(backup);
+            for (boolean staleManifest : List.of(false, true)) {
+                for (var intent : List.of(new SharedCommand.Claim(), new SharedCommand.Release(), new SharedCommand.SetDone(true), new SharedCommand.SetNote("forbidden"))) {
+                    var command = new SharedCommand(s.scope(), id, UUID.randomUUID(),
+                        s.rows().get(id).rowVersion() - (staleManifest ? 0 : 1),
+                        s.manifest().version() - (staleManifest ? 1 : 0), intent);
+                    for (int attempt = 0; attempt < 2; attempt++) {
+                        var outcome = await(service.command(member, command));
+                        assertEquals(DENIED, outcome.result().status());
+                        assertNull(outcome.result().row()); assertTrue(outcome.events().isEmpty());
+                        assertArrayEquals(primaryBytes, Files.readAllBytes(primary));
+                        assertArrayEquals(backupBytes, Files.readAllBytes(backup));
+                        var after = store.load(s.scope().worldNamespace(), s.scope().projectId()).value();
+                        assertEquals(before.generation(), after.generation()); assertEquals(before, after);
+                    }
+                }
+            }
+        }
+    }
+    @Test void authorizedStaleMaterialConflictsRetainOriginalOutcome() throws Exception { authorizedStaleConflictsRetainOriginalOutcome(false); }
+    @Test void authorizedStaleRegionConflictsRetainOriginalOutcome() throws Exception { authorizedStaleConflictsRetainOriginalOutcome(true); }
+    private void authorizedStaleConflictsRetainOriginalOutcome(boolean region) throws Exception {
+        ProjectSnapshot s;
+        var commands = new ArrayList<SharedCommand>(); var outcomes = new ArrayList<SharedEvents.Outcome>();
+        var store = new SharedProjectStore(root);
+        try (var service = new SharedProjectService(store)) {
+            s = membership(service, owner, create(service), member, ProjectRole.MEMBER);
+            var updated = await(service.updateManifest(owner, s.scope(), s.projectRevision(), s.manifest().version(), definition(30, definition().regions().getFirst())));
+            assertEquals(OK, updated.status()); s = updated.value();
+            TaskId id = region ? both(s).get(1) : STONE;
+            assertEquals(OK, act(service, member, s, id, new SharedCommand.Claim()).result().status());
+            s = current(service, s);
+            for (boolean staleManifest : List.of(false, true)) {
+                var command = new SharedCommand(s.scope(), id, UUID.randomUUID(),
+                    s.rows().get(id).rowVersion() - (staleManifest ? 0 : 1),
+                    s.manifest().version() - (staleManifest ? 1 : 0), new SharedCommand.SetNote("stale"));
+                var before = store.load(s.scope().worldNamespace(), s.scope().projectId()).value();
+                var outcome = await(service.command(member, command));
+                assertEquals(CONFLICT, outcome.result().status()); assertTrue(outcome.events().isEmpty());
+                assertEquals(s.rows().get(id), outcome.result().row()); assertEquals(s.projectRevision(), outcome.result().projectRevision());
+                var after = store.load(s.scope().worldNamespace(), s.scope().projectId()).value();
+                assertEquals(before.generation() + 1, after.generation()); assertEquals(before.snapshot(), after.snapshot());
+                assertEquals(before.operations().size() + 1, after.operations().size());
+                assertEquals(outcome.result(), after.operations().getLast().result());
+                commands.add(command); outcomes.add(outcome);
+            }
+            assertEquals(OK, act(service, member, s, id, new SharedCommand.SetNote("later accepted value")).result().status());
+            s = current(service, s);
+            for (int i = 0; i < commands.size(); i++) assertEquals(outcomes.get(i), await(service.command(member, commands.get(i))));
+        }
+        try (var service = new SharedProjectService(store)) {
+            await(service.ready());
+            var before = store.load(s.scope().worldNamespace(), s.scope().projectId()).value();
+            Path primary = file(s), backup = primary.resolveSibling(primary.getFileName() + ".bak");
+            byte[] primaryBytes = Files.readAllBytes(primary), backupBytes = Files.readAllBytes(backup);
+            for (int i = 0; i < commands.size(); i++) assertEquals(outcomes.get(i), await(service.command(member, commands.get(i))));
+            assertArrayEquals(primaryBytes, Files.readAllBytes(primary)); assertArrayEquals(backupBytes, Files.readAllBytes(backup));
+            assertEquals(before, store.load(s.scope().worldNamespace(), s.scope().projectId()).value());
+        }
+    }
     @Test void releasePreservesManualCompletionAndNote() throws Exception {
         try (var service = new SharedProjectService(new SharedProjectStore(root))) {
             var s = membership(service, owner, create(service), member, ProjectRole.MEMBER);
