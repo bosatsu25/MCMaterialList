@@ -381,12 +381,20 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
         UUID owner = UUID.randomUUID(); var service = server.computeOnServer(SharedServerNetworking::service);
         var created = await(service.create(owner, SharedClientNetworking.state().capabilities().worldNamespace(),
             "committed revoke fixture", definition())).value();
-        await(service.setMembership(owner, created.scope(), 0, actor, ProjectRole.MEMBER));
+        check(await(service.setMembership(owner, created.scope(), 0, actor, ProjectRole.MEMBER)).status()
+            == SharedEvents.Status.OK, "Committed fixture did not grant membership");
         TransportLifecycleProbe.holdNextActual(service);
         try {
             UUID join = context.computeOnClient(client -> SharedClientNetworking.join(created.scope()));
-            context.waitFor(client -> TransportLifecycleProbe.held(), 600);
+            context.waitFor(client -> TransportLifecycleProbe.held() && TransportLifecycleProbe.startedHeld(), 600);
+            check(!TransportLifecycleProbe.subscribed(created.scope()),
+                "Held snapshot incorrectly proved server subscription had been applied");
+            // A durable Join reply may precede the server tick that applies its Started subscription.
+            TransportLifecycleProbe.releaseStarted();
+            context.waitFor(client -> TransportLifecycleProbe.subscribed(created.scope()), 600);
+            check(TransportLifecycleProbe.held(), "Private snapshot escaped before committed revocation");
             var removed = await(service.setMembership(owner, created.scope(), 1, actor, null));
+            check(removed.status() == SharedEvents.Status.OK, "Committed fixture did not commit removal");
             server.runOnServer(mc -> SharedServerNetworking.publishEvents(mc, removed.events()));
             context.waitFor(client -> SharedClientNetworking.state().status()
                 == dev.mcmateriallist.core.shared.transport.SharedClientState.Status.REVOKED, 600);
@@ -395,7 +403,9 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
             context.runOnClient(client -> check(SharedClientNetworking.state().snapshot() == null
                 && SharedClientNetworking.reply(join) == null,
                 "Committed callback published private snapshot after revocation"));
-        } finally { if (TransportLifecycleProbe.held()) TransportLifecycleProbe.release(); }
+            check(await(service.join(owner, created.scope())).value().rows().equals(created.rows()),
+                "Committed revocation barrier changed durable task rows");
+        } finally { TransportLifecycleProbe.releaseActualIfHeld(); }
     }
     private static void verifyAbsentInitiatorEvents(ClientGameTestContext context,
             net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server) {

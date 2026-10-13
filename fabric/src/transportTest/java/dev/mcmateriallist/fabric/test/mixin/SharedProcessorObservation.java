@@ -19,6 +19,8 @@ abstract class SharedProcessorObservation {
     private void stopped(CallbackInfo callback) { TransportLifecycleProbe.unregister(service); }
     @WrapMethod(method = "completion")
     private void completed(@Coerce Object completion, Operation<Void> original) {
+        if (completion instanceof SharedStartedIdentity identity
+            && TransportLifecycleProbe.holdStarted(identity.initiatingToken(), () -> original.call(completion))) return;
         if (completion instanceof SharedCompletionIdentity identity
             && TransportLifecycleProbe.hold(identity.initiatingToken(), () -> original.call(completion))) return;
         original.call(completion);
