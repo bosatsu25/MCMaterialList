@@ -52,6 +52,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             context.waitFor(client -> SharedClientNetworking.state().capabilities() != null, 600);
             var placement = context.computeOnClient(client -> fixture(client.player.blockPosition().above(8)));
             context.waitFor(client -> SchematicWorldHandler.getSchematicWorld().getBlockState(placement.getOrigin()).is(Blocks.STONE));
+            context.waitFor(client -> NativeSharedCapture.capture(placement, null, false).ok(), 600);
             var materials = context.computeOnClient(client -> placement.getMaterialList());
             context.waitFor(client -> materials.getMaterialsAll().size() == 2
                 && PlacementWorkAdapter.capture(placement, materials).status() == PlacementWorkAdapter.Status.OK, 600);
@@ -71,6 +72,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             Path config = FabricLoader.getInstance().getConfigDir().resolve("mcmateriallist");
             Path localFile = config.resolve("placements").resolve(placement.getHashId().toString()).resolve("materials.json");
             byte[] localBytes = Files.readAllBytes(localFile);
+            if (SharedUiRaceChecks.enabled("source")) SharedUiSourceChecks.beforeCreate(context, server, placement, materials, work, localFile);
             capture(context, screen, "phase3-explicit-shared-entry");
             click(context, context.computeOnClient(client -> button(screen, "Share")));
             create(context, "Material project");
@@ -78,6 +80,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             context.runOnClient(client -> check(!work.state(glass).done() && work.dataset().equals(originalLocal), "Creation imported local work or changed local identity"));
             back(context); back(context);
             context.waitForScreen(GuiMaterialList.class);
+            if (SharedUiRaceChecks.enabled("source")) SharedUiSourceChecks.loadedEdit(context, server, placement, materials, work, localFile);
             if (SharedUiRaceChecks.enabled("publication")) SharedUiRaceChecks.publication(context, server, screen, work, stone);
             var materialReference = context.computeOnClient(client -> work.shared().reference());
             click(context, context.computeOnClient(client -> rowButton(screen, stone, MaterialDoneButton.class)));
@@ -114,7 +117,12 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             context.runOnClient(client -> check(work.state(stone).assignee() == null, "Rejected assignment optimistically changed native row"));
             back(context); back(context);
             // Real presend save is held without blocking either thread. Local selection must refuse until settled.
+            var placementId = context.computeOnClient(client -> PlacementWorkAdapter.captureRegions(placement).snapshot().placementId());
+            var store = new SharedClientStore(config);
+            var unrelatedUnknowns = store.load(placementId).value().operations().stream()
+                .filter(operation -> operation.confirmation() == null && !operation.original().equals(materialReference)).toList();
             SharedUiDelays.admission = new CompletableFuture<>(); SharedUiDelays.result = new CompletableFuture<>();
+            SharedUiDelays.admitted = false; SharedUiDelays.executed = false;
             click(context, context.computeOnClient(client -> rowButton(screen, glass, MaterialDoneButton.class)));
             context.waitFor(client -> SharedUiDelays.admitted, 600);
             context.runOnClient(client -> {
@@ -126,10 +134,11 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             click(context, context.computeOnClient(client -> button(screen, "Share"))); action(context, "Use local work");
             context.waitFor(client -> !work.shared().selected() && !work.pending(), 600);
             SharedUiDelays.result.complete(null); SharedUiDelays.result = null;
-            var placementId = context.computeOnClient(client -> PlacementWorkAdapter.captureRegions(placement).snapshot().placementId());
-            var store = new SharedClientStore(config);
-            for (int i = 0; i < 200 && store.load(placementId).value().operations().stream().anyMatch(operation -> operation.confirmation() == null); i++) context.waitTicks(1);
-            check(store.load(placementId).value().operations().stream().allMatch(operation -> operation.confirmation() != null), "Late actual socket result did not settle original journal");
+            for (int i = 0; i < 200 && store.load(placementId).value().operations().stream()
+                .anyMatch(operation -> operation.original().equals(materialReference) && operation.confirmation() == null); i++) context.waitTicks(1);
+            check(store.load(placementId).value().operations().stream().filter(operation -> operation.original().equals(materialReference))
+                .allMatch(operation -> operation.confirmation() != null), "Late actual socket result did not settle original journal");
+            check(store.load(placementId).value().operations().containsAll(unrelatedUnknowns), "Late baseline result changed unrelated original unknown operations");
             context.runOnClient(client -> check(work.dataset().equals(originalLocal) && work.state(glass).done() && !work.state(stone).done(), "Late shared result contaminated local rows"));
             action(context, "Find projects"); context.waitFor(client -> !SharedClientNetworking.state().projects().isEmpty(), 600);
             action(context, "Join: Material project"); context.waitFor(client -> work.shared().selected() && work.writable(), 600); back(context);
@@ -178,6 +187,8 @@ public final class SharedUiClientTest implements FabricClientGameTest {
           }
           if (SharedUiRaceChecks.enabled("admission")) SharedUiRaceChecks.closedAdmission(context, server);
         }
+        SharedSourceLoading.shutdown();
+        check(SharedSourceLoading.awaitClosed(10, java.util.concurrent.TimeUnit.SECONDS), "Loaded source worker did not close");
         org.slf4j.LoggerFactory.getLogger("mcmateriallist-shared-ui-test").info("Shared native UI all assertions PASS");
       } catch (Exception failure) { throw new AssertionError("Shared native UI fixture failed", failure); }
     }
@@ -225,9 +236,10 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         Files.write(source, new byte[]{1}, StandardOpenOption.APPEND);
         try {
             click(context, context.computeOnClient(client -> rowButton(screen, stone, MaterialDoneButton.class)));
-            context.waitFor(client -> !work.pending() && work.shared().feedback().equals(SharedWorkBackend.text("baseline_mismatch")), 600);
+            context.waitFor(client -> !work.pending() && work.shared().feedback().equals(SharedWorkBackend.text("source_reload_required")), 600);
             context.runOnClient(client -> check(work.state(stone).done(), "Changed source bytes bypassed digest verification"));
         } finally { Files.write(source, bytes); }
+        SharedUiSourceChecks.reload(context, placement, materials);
         action(context, "Refresh"); context.waitFor(client -> work.ready() && materials.getMaterialsAll().size() == 2, 600);
         action(context, "Refresh work"); context.waitFor(client -> work.writable(), 600);
         context.runOnClient(client -> check(work.shared().snapshot().manifest().equals(before.manifest()) && work.shared().snapshot().projectRevision() == before.projectRevision(),

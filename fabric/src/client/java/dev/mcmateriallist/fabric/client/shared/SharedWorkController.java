@@ -208,11 +208,25 @@ public final class SharedWorkController {
             };
             var command = new SharedCommand(original.scope(), task, UUID.randomUUID(), selected.rows().get(task).rowVersion(), selected.manifest().version(), wire);
                 entry.busy++; setReason(entry, "saving_intent");
-                SharedClientNetworking.submit(command, (context, value) -> {
+                SharedClientNetworking.submit(command, new SharedClientNetworking.DurableAdmission() {
+                  @Override public CompletionStage<Boolean> persist(SharedClientNetworking.AdmissionContext context, SharedCommand value) {
                     // Exact producer presend boundary. No render-thread I/O and no Boolean-as-success conversion.
                     var persisted = service.admit(entry.placement, backend.kind(), original, context.actor(), context.connectionId(), value);
                     persisted.whenComplete((saved, failure) -> later(() -> publish(entry, saved, failure)));
                     return persisted.thenApply(SharedClientStore.Result::ok);
+                  }
+                  @Override public CompletionStage<Boolean> validate() {
+                    try {
+                        return CompletableFuture.supplyAsync(() -> SchematicSourceDigest.read(capture.source().root(), capture.source().file(),
+                            capture.source().loaded().file(), capture.source().loaded().completedDigest()).status() == SchematicSourceDigest.Status.OK, digests)
+                            .completeOnTimeout(false, 30, TimeUnit.SECONDS).exceptionally(failure -> false);
+                    } catch (RejectedExecutionException unavailable) { return CompletableFuture.completedFuture(false); }
+                  }
+                  @Override public boolean current() {
+                    var current = backend.capture(false);
+                    return !closed && Objects.equals(original, reference(entry, backend.kind()))
+                        && current.ok() && capture.source().equals(current.source());
+                  }
                 }).whenComplete((admitted, failure) -> later(() -> {
                     entry.busy--; entry.version++;
                     boolean unknown = entry.archive != null && SharedClientService.hasUnknown(entry.archive, original.actor(), original.scope());
@@ -238,7 +252,8 @@ public final class SharedWorkController {
         UUID actor = actor(); var listener = Minecraft.getInstance().getConnection(); var original = reference(entry, backend.kind());
         entry.busy++; setReason(entry, "checking_source");
         try {
-            CompletableFuture.supplyAsync(() -> SchematicSourceDigest.read(captured.source().root(), captured.source().file()), digests)
+            CompletableFuture.supplyAsync(() -> SchematicSourceDigest.read(captured.source().root(), captured.source().file(),
+                captured.source().loaded().file(), captured.source().loaded().completedDigest()), digests)
                 .whenComplete((read, failure) -> later(() -> {
                     entry.busy--; entry.version++;
                     var current = backend.capture(full);
@@ -248,7 +263,9 @@ public final class SharedWorkController {
                         setReason(entry, current.ok() ? "baseline_mismatch" : current.reason()); return;
                     }
                     if (failure != null || read == null) { setReason(entry, "source.IO_FAILURE"); return; }
-                    if (read.status() != SchematicSourceDigest.Status.OK) { setReason(entry, "source." + read.status().name()); return; }
+                    if (read.status() != SchematicSourceDigest.Status.OK) {
+                        setReason(entry, read.status() == SchematicSourceDigest.Status.CHANGED_DURING_READ ? "source_reload_required" : "source." + read.status().name()); return;
+                    }
                     action.accept(captured, read.digest());
                 }));
         } catch (RejectedExecutionException capacity) { entry.busy--; setReason(entry, "capacity"); }

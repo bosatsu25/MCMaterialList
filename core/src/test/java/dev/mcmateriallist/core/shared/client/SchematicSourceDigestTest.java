@@ -29,4 +29,28 @@ class SchematicSourceDigestTest {
         assertEquals(SchematicSourceDigest.Status.UNSAFE_SOURCE, SchematicSourceDigest.read(owned, owned).status());
         assertEquals("private unrelated data", Files.readString(outside));
     }
+    @Test void digestCannotAdoptAReplacementOntoTheOriginalLoadedFileVersion() throws Exception {
+        Path file = root.resolve("source.litematic"); Files.writeString(file, "source A");
+        var loaded = SchematicSourceDigest.stamp(file); assertNotNull(loaded);
+        String loadedDigest;
+        var digests = new LoadedSourceDigests();
+        try {
+            var actual = digests.observe(Files.newInputStream(file));
+            assertEquals('s', actual.read()); actual.close(); // Native parser may leave an unread tail.
+            loadedDigest = actual.digest().get(5, java.util.concurrent.TimeUnit.SECONDS);
+        } finally { digests.close(); assertTrue(digests.awaitClosed(5, java.util.concurrent.TimeUnit.SECONDS)); }
+        assertEquals(SchematicSourceDigest.Status.OK, SchematicSourceDigest.read(root, file, loaded).status());
+        Files.writeString(file, "source B"); Files.setLastModifiedTime(file, loaded.modified());
+        assertTrue(loaded.current(), "Same-file same-size overwrite must retain the complete metadata stamp");
+        assertEquals(SchematicSourceDigest.Status.CHANGED_DURING_READ, SchematicSourceDigest.read(root, file, loaded, loadedDigest).status());
+        Path replacement = root.resolve("replacement.litematic"); Files.writeString(replacement, "source B");
+        Files.setLastModifiedTime(replacement, loaded.modified()); // Same size/time still needs the same actual file.
+        Files.move(replacement, file, StandardCopyOption.REPLACE_EXISTING);
+        // Windows may tunnel all metadata including creation time; consumed-byte identity still rejects B.
+        assertEquals(SchematicSourceDigest.Status.CHANGED_DURING_READ, SchematicSourceDigest.read(root, file, loaded, loadedDigest).status());
+        assertEquals("source B", Files.readString(file));
+        var reloaded = SchematicSourceDigest.stamp(file);
+        assertEquals(SchematicSourceDigest.Status.OK, SchematicSourceDigest.read(root, file, reloaded).status());
+        assertEquals(SchematicSourceDigest.Status.CHANGED_DURING_READ, SchematicSourceDigest.read(root, file, null).status());
+    }
 }

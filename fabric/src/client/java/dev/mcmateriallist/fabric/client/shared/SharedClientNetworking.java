@@ -27,7 +27,8 @@ public final class SharedClientNetworking {
     private enum Kind { CREATE, JOIN, ADMIN, DISCOVERY }
     private record Request(Kind kind, ProjectScope scope, long started) {}
     private record Decoded(SharedMessage message) {}
-    private record Admission(SharedCommand command, boolean durable, CompletableFuture<Boolean> result) {}
+    private record Admission(SharedCommand command, boolean durable, boolean sourceAllowed,
+        DurableAdmission journal, CompletableFuture<Boolean> result) {}
     private record Pending(SharedCommand command, AdmissionContext context) {}
     private record Confirmed(SharedEvents.CommandResult result, AdmissionContext context) {}
     private static final class Connection {
@@ -209,6 +210,10 @@ public final class SharedClientNetworking {
     @FunctionalInterface public interface DurableAdmission {
         /** Completes true only after persisting this exact immutable command durably. */
         CompletionStage<Boolean> persist(AdmissionContext context, SharedCommand command);
+        /** Independent source check after persistence. Refusal must retain the durable unknown original. */
+        default CompletionStage<Boolean> validate() { return CompletableFuture.completedFuture(true); }
+        /** Cheap final native-state check, called only on the client thread at admission. */
+        default boolean current() { return true; }
     }
     public static CompletionStage<Boolean> submit(SharedCommand command, DurableAdmission journal) {
         Objects.requireNonNull(command); Objects.requireNonNull(journal);
@@ -223,7 +228,13 @@ public final class SharedClientNetworking {
         catch (RuntimeException failure) { unresolved.remove(command.operationId()); return CompletableFuture.completedFuture(false); }
         durable.whenComplete((admitted, failure) -> {
             boolean accepted = failure == null && Boolean.TRUE.equals(admitted);
-            if (!current.admissions.offer(new Admission(command, accepted, sent)) && current.open) current.failed.set(true);
+            CompletionStage<Boolean> validation;
+            try { validation = accepted ? Objects.requireNonNull(journal.validate()) : CompletableFuture.completedFuture(false); }
+            catch (RuntimeException unavailable) { validation = CompletableFuture.completedFuture(false); }
+            validation.whenComplete((valid, rejected) -> {
+                if (!current.admissions.offer(new Admission(command, accepted, rejected == null && Boolean.TRUE.equals(valid), journal, sent))
+                    && current.open) current.failed.set(true);
+            });
         });
         return sent.minimalCompletionStage();
     }
@@ -289,7 +300,8 @@ public final class SharedClientNetworking {
         for (int i = 0; i < 16; i++) {
             Admission admission = current.admissions.poll(); if (admission == null) break;
             if (!admission.durable()) { unresolved.remove(admission.command().operationId()); admission.result().complete(false); }
-            else if (!canWrite(admission.command()) || !pendingHere(current, admission.command())) admission.result().complete(false);
+            else if (!admission.sourceAllowed() || !sourceCurrent(admission.journal())
+                || !canWrite(admission.command()) || !pendingHere(current, admission.command())) admission.result().complete(false);
             else admission.result().complete(current.encode(new SharedMessage.TaskCommand(admission.command())));
         }
         if (state.status() == SharedClientState.Status.NEGOTIATING && now() - current.helloStarted >= 30_000) state.unavailable();
@@ -308,6 +320,9 @@ public final class SharedClientNetworking {
             try { current.listener.getConnection().send(ClientPlayNetworking.createServerboundPacket(new SharedPayload(frame.fragment())), future -> release.run()); }
             catch (RuntimeException failure) { release.run(); state.failed(); current.clearTransfers(); }
         }
+    }
+    private static boolean sourceCurrent(DurableAdmission journal) {
+        try { return journal.current(); } catch (RuntimeException unavailable) { return false; }
     }
     private static boolean pendingHere(Connection current, SharedCommand command) {
         Pending pending = unresolved.get(command.operationId());

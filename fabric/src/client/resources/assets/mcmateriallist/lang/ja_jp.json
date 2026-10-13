@@ -98,6 +98,8 @@
   "mcmateriallist.shared.unknown_outcome": "送信結果が未確定のため共有編集はできません。",
   "mcmateriallist.shared.revoked": "アクセスが解除され、共有キャッシュを消去しました。",
   "mcmateriallist.shared.wrong_world": "この共有設定は別のサーバーワールド用です。",
+  "mcmateriallist.shared.source_reload_required": "保存済みの設計図を再読込し、全体を再集計してから共有作業を同期してください。",
+  "mcmateriallist.shared.source_edited": "設計図に未保存の編集があります。保存または破棄した後、再読込・全体の再集計・共有作業の同期を行ってください。",
   "mcmateriallist.shared.baseline_mismatch": "元ファイルまたは配置が変わりました。共有時の状態に戻してください。",
   "mcmateriallist.shared.definitions_mismatch": "設計図の定義がプロジェクトと一致しません。",
   "mcmateriallist.shared.join_required": "共有編集の前に、このリストへ参加・再同期してください。",

@@ -47,6 +47,9 @@ final class SharedUiRaceChecks {
             context.waitFor(client -> confirmed.get() && SharedUiDelays.cacheHeld, 600);
             int submissions = SharedUiDelays.submissions;
             context.runOnClient(client -> {
+                // Reproduce the native scheduled rebuild between frames (including slow CI renderers).
+                // New controls must start disabled while the confirmed cache is held.
+                screen.initGui();
                 check(!((SharedUiAccess.Button) rowButton(screen, stone, MaterialDoneButton.class)).enabled(), "Native Done enabled during cache hold");
                 work.shared().command(stone, new TaskCommand.SetDone(true));
             });
@@ -218,6 +221,7 @@ final class SharedUiRaceChecks {
             connection.getClientLevel().waitForChunksRender();
             context.waitFor(client -> SharedClientNetworking.state().capabilities() != null, 600);
             var placement = context.computeOnClient(client -> fixture(client.player.blockPosition().above(14)));
+            context.waitFor(client -> NativeSharedCapture.capture(placement, null, false).ok(), 600);
             var materials = context.computeOnClient(client -> placement.getMaterialList());
             context.waitFor(client -> materials.getMaterialsAll().size() == 2
                 && dev.mcmateriallist.fabric.client.work.PlacementWorkAdapter.capture(placement, materials).status()
@@ -232,11 +236,18 @@ final class SharedUiRaceChecks {
             byte[] localBytes = Files.readAllBytes(local);
             action(context, "Share"); create(context, "Closed admission project"); context.waitFor(client -> work.shared().selected() && work.writable(), 600);
             back(context); back(context);
+            var store = new SharedClientStore(config);
+            var reference = context.computeOnClient(client -> work.shared().reference());
+            var earlierUnknowns = store.load(id).value().operations().stream().filter(operation -> operation.confirmation() == null).toList();
             SharedUiDelays.admission = gate; SharedUiDelays.admitted = false;
             click(context, context.computeOnClient(client -> rowButton(screen, new MaterialTaskId("minecraft:stone"), MaterialDoneButton.class)));
             context.waitFor(client -> SharedUiDelays.admitted, 600);
-            var store = new SharedClientStore(config);
-            var original = store.load(id).value().operations().stream().filter(operation -> operation.confirmation() == null).findFirst().orElseThrow();
+            var command = SharedUiDelays.command;
+            var original = store.load(id).value().operations().stream()
+                .filter(operation -> operation.command().operationId().equals(command.operationId())).findFirst().orElseThrow();
+            check(original.confirmation() == null && original.original().equals(reference)
+                && original.command().equals(command) && original.kind() == DatasetKind.MATERIALS,
+                "Closed-admission fixture did not identify its exact newly persisted original");
             connection.close(); closed = true;
             context.waitFor(client -> SharedClientNetworking.state().status() == SharedClientState.Status.DISCONNECTED, 600);
             context.runOnClient(client -> check(gate.complete(null), "Closed-admission test gate was already settled"));
@@ -255,10 +266,12 @@ final class SharedUiRaceChecks {
                         ((SharedUiAccess.Backend) (Object) work.shared()).controller()).closed()), failure);
             }
             check(!SharedUiDelays.submitted.toCompletableFuture().join(), "Closed connection sent a delayed command");
-            check(store.load(id).value().operations().contains(original), "Closure cancelled or remapped the original unknown command");
+            check(store.load(id).value().operations().contains(original) && store.load(id).value().operations().containsAll(earlierUnknowns),
+                "Closure cancelled or remapped original unknown commands");
             context.runOnClient(client -> work.shared().local());
             context.waitFor(client -> !work.shared().selected() && !work.shared().pending(), 600);
-            check(store.load(id).value().operations().contains(original) && Arrays.equals(localBytes, Files.readAllBytes(local)),
+            check(store.load(id).value().operations().contains(original) && store.load(id).value().operations().containsAll(earlierUnknowns)
+                && Arrays.equals(localBytes, Files.readAllBytes(local)),
                 "Local selection after closed admission cancelled unknown work or changed local bytes");
         } finally {
             SharedUiDelays.admission = null; gate.complete(null); if (!closed) connection.close();

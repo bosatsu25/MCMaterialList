@@ -16,7 +16,7 @@ import net.minecraft.core.BlockPos;
 /** Render-thread native capture only. Source bytes are hashed by the owned background queue. */
 public final class NativeSharedCapture {
     public record Source(LocalPlacementId placement, Path root, Path file, SharedManifest.Baseline baseline,
-        List<RegionDescriptor> regions) {
+        List<RegionDescriptor> regions, SharedLoadedSource.Proof loaded) {
         public Source { regions = List.copyOf(regions); }
         public boolean matches(SharedManifest.Definition definition, String digest) {
             return definition.schematicDigest().equals(digest) && definition.baseline().equals(baseline)
@@ -34,10 +34,20 @@ public final class NativeSharedCapture {
         var client = Minecraft.getInstance();
         if (client.level == null) return failure("no_world");
         try {
+            var schematic = placement.getSchematic();
+            if (schematic.getFile() == null) return failure("source.UNSAVED");
+            if (!(schematic instanceof SharedLoadedSource loaded) || loaded.mcmateriallist$loadedSource() == null)
+                return failure("source_reload_required");
+            var proof = loaded.mcmateriallist$loadedSource();
+            if (!(schematic.getMetadata() instanceof SharedSchematicRevision revision)
+                || proof.editRevision() != revision.mcmateriallist$editRevision()
+                || schematic.getMetadata().wasModifiedSinceSaved() && !proof.modifiedAtLoad()) return failure("source_edited");
+            if (!proof.file().current()) return failure("source_reload_required");
+            if (proof.completedDigest() == null) return failure("source_reload_required");
             var baseline = new SharedManifest.Baseline(client.level.dimension().identifier().toString(), vector(placement.getOrigin()),
                 SharedManifest.Baseline.Rotation.valueOf(placement.getRotation().name()), SharedManifest.Baseline.Mirror.valueOf(placement.getMirror().name()));
             var source = new Source(regions.snapshot().placementId(), DataManager.getSchematicsBaseDirectory(), placement.getSchematic().getFile(),
-                baseline, regions.snapshot().regions());
+                baseline, regions.snapshot().regions(), proof);
             if (source.file() == null) return failure("source.UNSAVED");
             if (!requireFullMaterials) return new Capture(null, source, Map.of());
             var material = PlacementWorkAdapter.capture(placement, list);

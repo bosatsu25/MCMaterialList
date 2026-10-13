@@ -98,6 +98,8 @@
   "mcmateriallist.shared.unknown_outcome": "Sent outcome unknown. Shared edits remain blocked.",
   "mcmateriallist.shared.revoked": "Access removed; private shared cache cleared.",
   "mcmateriallist.shared.wrong_world": "This binding belongs to another server world.",
+  "mcmateriallist.shared.source_reload_required": "Reload the saved schematic and run a full recount, then synchronize shared work.",
+  "mcmateriallist.shared.source_edited": "The schematic has unsaved edits. Save or discard them, then reload, run a full recount and synchronize.",
   "mcmateriallist.shared.baseline_mismatch": "Source or placement changed. Restore the shared baseline.",
   "mcmateriallist.shared.definitions_mismatch": "Schematic definitions do not match this project.",
   "mcmateriallist.shared.join_required": "Join / synchronize this list before shared editing.",

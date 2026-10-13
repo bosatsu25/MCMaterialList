@@ -14,5 +14,7 @@ public final class SharedUiDelays {
     public static volatile Runnable validated;
     public static volatile java.util.concurrent.CompletionStage<Boolean> submitted;
     public static volatile dev.mcmateriallist.core.shared.SharedCommand command;
+    public static volatile boolean holdCount;
+    public static volatile Runnable publishCount;
     private SharedUiDelays() {}
 }

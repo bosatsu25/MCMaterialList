@@ -38,6 +38,14 @@ class SharedClientStoreTest {
     private SharedClientArchive next(SharedClientArchive before) {
         return new SharedClientArchive(before.generation() + 1, placement, before.materials(), before.regions(), before.operations());
     }
+    @Test void goodPrimaryDoesNotPermitReplacingAnIntegralFutureBackup() throws Exception {
+        var store = new SharedClientStore(root); var before = archive(); assertTrue(store.save(before, -1).ok());
+        Path backup = file().resolveSibling(file().getFileName() + ".bak");
+        String future = "{\"payload\":{},\"schema\":1e2}"; Files.writeString(backup, future);
+        byte[] primary = Files.readAllBytes(file());
+        assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.save(next(before), 0).status());
+        assertArrayEquals(primary, Files.readAllBytes(file())); assertEquals(future, Files.readString(backup));
+    }
 
     @Test void restartRetainsIndependentProjectListsOriginalLocalIdsAndUnknownOriginalIntent() throws Exception {
         var before = archive(); var store = new SharedClientStore(root);
@@ -118,7 +126,7 @@ class SharedClientStoreTest {
         byte[] backup = Files.readAllBytes(backupFile);
         // A future payload need not use this version's Base64 encoding or string type.
         for (String payload : List.of("\"future format\"", "{\"schema\":1,\"text\":\"schema: 1\"}")) {
-          for (String version : List.of("99", "2147483648")) {
+          for (String version : List.of("99", "2147483648", "99.0", "1e2", "1e999999999999999999999")) {
             String future = "{\"payload\":" + payload + ",\"schema\":" + version + "}";
             Files.writeString(file(), future);
             assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.load(placement).status());
@@ -143,6 +151,25 @@ class SharedClientStoreTest {
             Files.writeString(file(), invalid);
             assertEquals(StoreStatus.CORRUPT, store.load(placement).status());
             assertEquals(invalid, Files.readString(file()));
+        }
+    }
+
+    @Test void numericFutureBackupAndSchemaFirstPrimaryRemainProtected() throws Exception {
+        var store = new SharedClientStore(root); var before = archive();
+        assertTrue(store.save(before, -1).ok()); assertTrue(store.save(next(before), 0).ok());
+        Path backup = file().resolveSibling(file().getFileName() + ".bak");
+        byte[] good = Files.readAllBytes(file());
+        for (String version : List.of("99.0", "1e2", "2.00e0", "1e99999999999999999999")) {
+            String future = "{\"schema\":" + version + ",\"payload\":{\"new\":true}}";
+            for (boolean futurePrimary : new boolean[]{true, false}) {
+                Files.write(file(), futurePrimary ? future.getBytes(java.nio.charset.StandardCharsets.UTF_8) : "broken".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                Files.write(backup, futurePrimary ? good : future.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                byte[] primaryBytes = Files.readAllBytes(file()), backupBytes = Files.readAllBytes(backup);
+                assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.load(placement).status());
+                assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.save(next(next(before)), 1).status());
+                assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.recover(placement).status());
+                assertArrayEquals(primaryBytes, Files.readAllBytes(file())); assertArrayEquals(backupBytes, Files.readAllBytes(backup));
+            }
         }
     }
 

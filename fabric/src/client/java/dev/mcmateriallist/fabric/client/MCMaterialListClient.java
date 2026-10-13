@@ -19,6 +19,7 @@ public final class MCMaterialListClient implements ClientModInitializer {
             work = new LocalWorkService(FabricLoader.getInstance().getConfigDir().resolve("mcmateriallist"));
             shared = new dev.mcmateriallist.fabric.client.shared.SharedWorkController(FabricLoader.getInstance().getConfigDir().resolve("mcmateriallist"));
             ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+                dev.mcmateriallist.fabric.client.shared.SharedSourceLoading.shutdown();
                 if (shared != null) { shared.shutdown(); shared = null; }
                 LocalWorkService current = work; work = null;
                 if (current != null) current.close();

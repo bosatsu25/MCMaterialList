@@ -129,17 +129,27 @@ public final class SharedProjectStore {
         catch (IllegalArgumentException | java.nio.charset.CharacterCodingException exception) { return Result.failure(StoreStatus.CORRUPT); }
     }
     private static Result<byte[]> parse(String json, String kind) {
+        var schema = SharedSchemaHeader.classify(json, Set.of("schema", "kind", "payload"));
+        if (schema != StoreStatus.OK) return Result.failure(schema);
         try (JsonReader reader = new JsonReader(new StringReader(json))) {
-            reader.setStrictness(com.google.gson.Strictness.STRICT);
-            reader.beginObject();
-            if (!reader.nextName().equals("schema")) return Result.failure(StoreStatus.CORRUPT);
-            int schema = reader.nextInt();
-            if (schema > SCHEMA) return Result.failure(StoreStatus.UNSUPPORTED_SCHEMA);
-            if (schema != SCHEMA || !reader.nextName().equals("kind") || !reader.nextString().equals(kind)
-                || !reader.nextName().equals("payload")) return Result.failure(StoreStatus.CORRUPT);
-            String encoded = reader.nextString();
+            reader.setStrictness(com.google.gson.Strictness.STRICT); reader.beginObject();
+            String encoded = null, actualKind = null;
+            while (reader.hasNext()) {
+                switch (reader.nextName()) {
+                    case "kind" -> {
+                        if (reader.peek() != JsonToken.STRING) return Result.failure(StoreStatus.CORRUPT);
+                        actualKind = reader.nextString();
+                    }
+                    case "payload" -> {
+                        if (reader.peek() != JsonToken.STRING) return Result.failure(StoreStatus.CORRUPT);
+                        encoded = reader.nextString();
+                    }
+                    default -> reader.skipValue();
+                }
+            }
+            reader.endObject();
+            if (!kind.equals(actualKind) || encoded == null || reader.peek() != JsonToken.END_DOCUMENT) return Result.failure(StoreStatus.CORRUPT);
             if (encoded.length() > ((long) SharedLimits.ARCHIVE_BYTES + 2) / 3 * 4) return Result.failure(StoreStatus.TOO_LARGE);
-            reader.endObject(); if (reader.peek() != JsonToken.END_DOCUMENT) return Result.failure(StoreStatus.CORRUPT);
             byte[] bytes = Base64.getDecoder().decode(encoded);
             if (kind.equals("project")) SharedBinary.decodeArchive(bytes); else readUuid(bytes);
             return new Result<>(StoreStatus.OK, bytes);

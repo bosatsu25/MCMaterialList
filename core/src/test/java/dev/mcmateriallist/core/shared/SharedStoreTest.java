@@ -108,4 +108,48 @@ class SharedStoreTest {
         catch (IOException | UnsupportedOperationException exception) { Assumptions.abort("Symbolic links unavailable to test account"); }
         assertEquals(StoreStatus.INVALID_PATH, new SharedProjectStore(link).openWorld().status());
     }
+
+    @Test void numericFutureProjectAndWorldEnvelopesCannotDowngradeInEitherFile() throws Exception {
+        var store = new SharedProjectStore(root); var a = initial(store);
+        assertTrue(store.save(a, -1).ok()); assertTrue(store.save(next(a), 0).ok());
+        Path world = root.resolve("mcmateriallist-shared/world.json");
+        for (Path primary : List.of(file(a), world)) {
+            Path previous = primary.resolveSibling(primary.getFileName() + ".bak");
+            byte[] current = Files.readAllBytes(primary);
+            for (String version : List.of("2", "99.0", "1e2", "2147483648", "1e999999999999999999999")) {
+                for (String future : List.of("{\"schema\":" + version + ",\"payload\":{},\"kind\":\"future\"}",
+                    "{\"kind\":\"future\",\"payload\":{},\"schema\":" + version + "}")) {
+                    for (boolean futurePrimary : new boolean[]{true, false}) {
+                        Files.write(primary, futurePrimary ? future.getBytes(java.nio.charset.StandardCharsets.UTF_8) : "broken".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        Files.write(previous, futurePrimary ? current : future.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        byte[] before = Files.readAllBytes(primary), backup = Files.readAllBytes(previous);
+                        if (primary.equals(world)) {
+                            assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.openWorld().status(), version);
+                            assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.recoverWorld().status(), version);
+                        } else {
+                            assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, load(store, a).status(), version);
+                            assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.save(next(next(a)), 1).status(), version);
+                            assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.recover(a.snapshot().scope().worldNamespace(), a.snapshot().scope().projectId()).status(), version);
+                        }
+                        assertArrayEquals(before, Files.readAllBytes(primary)); assertArrayEquals(backup, Files.readAllBytes(previous));
+                    }
+                }
+            }
+            Files.write(primary, current); Files.write(previous, current);
+        }
+    }
+    @Test void reorderedCurrentProjectAndWorldLoadAndFutureBackupCannotBeOverwritten() throws Exception {
+        var store = new SharedProjectStore(root); var a = initial(store); assertTrue(store.save(a, -1).ok());
+        for (Path path : List.of(file(a), root.resolve("mcmateriallist-shared/world.json"))) {
+            var json = com.google.gson.JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+            String reordered = "{\"payload\":" + json.get("payload") + ",\"kind\":" + json.get("kind") + ",\"schema\":1}";
+            Files.writeString(path, reordered);
+            assertTrue(path.equals(file(a)) ? load(store, a).ok() : store.openWorld().ok());
+            assertEquals(reordered, Files.readString(path));
+        }
+        String primary = Files.readString(file(a));
+        String future = "{\"payload\":{},\"schema\":99.0}"; Files.writeString(backup(a), future);
+        assertEquals(StoreStatus.UNSUPPORTED_SCHEMA, store.save(next(a), 0).status());
+        assertEquals(primary, Files.readString(file(a))); assertEquals(future, Files.readString(backup(a)));
+    }
 }

@@ -3,6 +3,7 @@ package dev.mcmateriallist.core.shared.client;
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.security.*;
 import java.util.*;
 
@@ -11,7 +12,35 @@ public final class SchematicSourceDigest {
     public static final long MAX_SOURCE_BYTES = 512L * 1024 * 1024;
     public enum Status { OK, UNSAVED, UNSAFE_SOURCE, TOO_LARGE, CHANGED_DURING_READ, IO_FAILURE }
     public record Result(Status status, String digest) {}
+    /** Local-only ordinary filesystem version; never part of a manifest or stored client archive. */
+    public record Stamp(Path file, Object fileKey, long size, FileTime modified, FileTime created) {
+        public boolean current() { return equals(stamp(file)); }
+    }
     private SchematicSourceDigest() {}
+    /** Small metadata probe only. Full path containment and streaming I/O remain in read(). */
+    public static Stamp stamp(Path source) {
+        if (source == null) return null;
+        try {
+            Path file = source.toAbsolutePath().normalize();
+            var attributes = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (!attributes.isRegularFile() || attributes.isSymbolicLink()
+                || attributes.fileKey() == null && attributes.creationTime().equals(FileTime.fromMillis(0))
+                || attributes.size() > MAX_SOURCE_BYTES) return null;
+            return new Stamp(file, attributes.fileKey(), attributes.size(), attributes.lastModifiedTime(), attributes.creationTime());
+        } catch (IOException | SecurityException failure) { return null; }
+    }
+    public static Result read(Path configuredSourceRoot, Path source, Stamp loaded) {
+        if (loaded == null || source == null || !loaded.file().equals(source.toAbsolutePath().normalize()) || !loaded.current())
+            return new Result(Status.CHANGED_DURING_READ, null);
+        var result = read(configuredSourceRoot, source);
+        return loaded.current() ? result : new Result(Status.CHANGED_DURING_READ, null);
+    }
+    public static Result read(Path root, Path source, Stamp loaded, String loadedDigest) {
+        if (loadedDigest == null) return new Result(Status.CHANGED_DURING_READ, null);
+        var current = read(root, source, loaded);
+        return current.status() == Status.OK && !loadedDigest.equals(current.digest())
+            ? new Result(Status.CHANGED_DURING_READ, null) : current;
+    }
     public static Result read(Path configuredSourceRoot, Path source) {
         if (source == null) return new Result(Status.UNSAVED, null);
         Path root = Objects.requireNonNull(configuredSourceRoot).toAbsolutePath().normalize();
