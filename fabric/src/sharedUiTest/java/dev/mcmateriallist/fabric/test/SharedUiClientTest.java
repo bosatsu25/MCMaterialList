@@ -196,7 +196,12 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             back(context); action(context, "Join / synchronize"); context.waitFor(client -> regions.writable(), 600);
             context.runOnClient(client -> check(regions.shared().snapshot().role(syntheticViewer) == null,
                 "Native participant removal not saved"));
-            action(context, "Manage participants..."); input(context, context.computeOnClient(client -> client.player.getUUID().toString()));
+            action(context, "Manage participants...");
+            assertMembershipNoOp(context, server, regions, context.computeOnClient(client -> client.player.getUUID()),
+                "Promote administrator");
+            assertMembershipNoOp(context, server, regions, syntheticViewer, "Remove participant");
+            context.runOnClient(client -> ((SharedUiAccess.MembershipInput) client.gui.screen()).input()
+                .setValueWrapper(client.player.getUUID().toString()));
             var regionScope = context.computeOnClient(client -> regions.shared().reference().scope());
             var beforeLastAdmin = server.computeOnServer(SharedServerNetworking::service)
                 .join(context.computeOnClient(client -> client.player.getUUID()), regionScope)
@@ -436,6 +441,31 @@ public final class SharedUiClientTest implements FabricClientGameTest {
     private static String rectangle(ButtonBase button) {
         return ChatFormatting.stripFormatting(((SharedUiAccess.Button) button).label()) + "[" + button.getX() + ","
             + button.getY() + "," + button.getWidth() + "," + button.getHeight() + "]";
+    }
+    private static void assertMembershipNoOp(ClientGameTestContext context,
+            net.fabricmc.fabric.api.client.gametest.v1.context.TestDedicatedServerContext server,
+            RegionWorkSession regions, UUID target, String action) throws Exception {
+        UUID actor = context.computeOnClient(client -> client.player.getUUID());
+        ProjectScope scope = context.computeOnClient(client -> regions.shared().reference().scope());
+        var service = server.computeOnServer(SharedServerNetworking::service);
+        var before = service.join(actor, scope).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value();
+        Path worldRoot = server.computeOnServer(mc -> mc.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT));
+        var store = new dev.mcmateriallist.core.shared.persistence.SharedProjectStore(worldRoot);
+        long generation = store.load(scope.worldNamespace(), scope.projectId()).value().generation();
+        Path primary = worldRoot.resolve("mcmateriallist-shared").resolve("project-" + scope.projectId() + ".json");
+        Path backup = primary.resolveSibling(primary.getFileName() + ".bak");
+        byte[] primaryBytes = Files.readAllBytes(primary), backupBytes = Files.exists(backup) ? Files.readAllBytes(backup) : null;
+        context.runOnClient(client -> ((SharedUiAccess.MembershipInput) client.gui.screen()).input().setValueWrapper(target.toString()));
+        action(context, action);
+        context.waitTicks(40);
+        var after = service.join(actor, scope).toCompletableFuture().get(10, java.util.concurrent.TimeUnit.SECONDS).value();
+        check(before.equals(after) && generation == store.load(scope.worldNamespace(), scope.projectId()).value().generation()
+            && Arrays.equals(primaryBytes, Files.readAllBytes(primary))
+            && Arrays.equals(backupBytes, Files.exists(backup) ? Files.readAllBytes(backup) : null),
+            "Native no-op membership changed server revision, generation, or bytes: " + action);
+        context.runOnClient(client -> check(regions.writable() && regions.shared().snapshot() != null
+            && regions.shared().snapshot().equals(before) && SharedClientNetworking.state().synchronizedState(),
+            "Native no-op membership dropped confirmed cache or writable state: " + action));
     }
     private static void membershipGeometry(ClientGameTestContext context) throws Exception {
         var form = context.computeOnClient(client -> (SharedMembershipScreen) client.gui.screen());

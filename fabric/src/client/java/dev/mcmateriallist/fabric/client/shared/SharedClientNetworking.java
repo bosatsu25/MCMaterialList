@@ -83,7 +83,9 @@ public final class SharedClientNetworking {
                 if (!encoding.reserve(bytes)) { failed.set(true); return; }
                 ProjectScope scope = message instanceof SharedMessage.TaskCommand command ? command.command().scope() : null;
                 try {
-                    byte[] bytesToSend = SharedProtocol.encode(message);
+                    byte[] bytesToSend = message instanceof SharedMessage.Hello hello
+                        && hello.protocolVersion() == SharedProtocol.VERSION
+                        ? SharedProtocol.encodeNegotiationHello() : SharedProtocol.encode(message);
                     if (!open || preparedEpoch != epoch.get()) return;
                     if (!outgoing.offer(token, scope, bytesToSend, now(), generation) && preparedEpoch == epoch.get()) failed.set(true);
                 }

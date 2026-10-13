@@ -8,6 +8,10 @@ import static dev.mcmateriallist.core.shared.protocol.SharedBinary.*;
 public final class SharedProtocol {
     public static final int VERSION = 2;
     private SharedProtocol() {}
+    /** Only negotiation uses the historical envelope; all application messages remain schema 2. */
+    public static byte[] encodeNegotiationHello() {
+        return SharedBinary.encode(9, out -> { out.writeInt(1); out.writeByte(0); out.writeInt(VERSION); });
+    }
     public static byte[] encode(SharedMessage message) {
         Objects.requireNonNull(message);
         return SharedBinary.encode(SharedLimits.MESSAGE_BYTES, out -> {
@@ -42,7 +46,13 @@ public final class SharedProtocol {
     }
     public static SharedMessage decode(byte[] bytes) {
         return SharedBinary.decode(bytes, SharedLimits.MESSAGE_BYTES, in -> {
-            if (in.readInt() != VERSION) throw new IllegalArgumentException("Unsupported shared protocol");
+            int envelope = in.readInt();
+            if (envelope == 1) {
+                if (bytes.length != 9 || in.readUnsignedByte() != 0)
+                    throw new IllegalArgumentException("Unsupported legacy message");
+                return new SharedMessage.Hello(in.readInt());
+            }
+            if (envelope != VERSION) throw new IllegalArgumentException("Unsupported shared protocol");
             return switch (in.readUnsignedByte()) {
                 case 0 -> new SharedMessage.Hello(in.readInt());
                 case 1 -> new SharedMessage.Capabilities(uuid(in), in.readInt(), in.readInt(), in.readInt(), in.readInt(), in.readInt(), in.readInt());

@@ -20,7 +20,8 @@ public record SharedPayload(SharedTransfers.Fragment fragment) implements Custom
             return new SharedPayload(SharedTransfers.decode(bytes));
         }
         @Override public void encode(RegistryFriendlyByteBuf buffer, SharedPayload payload) {
-            byte[] frame = SharedTransfers.encode(payload.fragment());
+            byte[] frame = SharedTransfers.isNegotiationHello(payload.fragment())
+                ? SharedTransfers.encodeNegotiationFrame(payload.fragment()) : SharedTransfers.encode(payload.fragment());
             buffer.writeInt(frame.length); buffer.writeBytes(frame);
         }
     };

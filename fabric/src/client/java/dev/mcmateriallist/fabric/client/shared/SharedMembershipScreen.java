@@ -126,6 +126,8 @@ public final class SharedMembershipScreen extends GuiBase {
         try {
             String value = input.getValueWrapper().strip(); UUID target = UUID.fromString(value);
             if (!target.toString().equalsIgnoreCase(value)) throw new IllegalArgumentException();
+            var snapshot = backend.snapshot();
+            if (snapshot == null || snapshot.role(target) == role) return;
             backend.membership(target, role);
         } catch (IllegalArgumentException invalid) { addMessage(MessageType.ERROR, SharedWorkBackend.text("invalid_uuid")); }
     }

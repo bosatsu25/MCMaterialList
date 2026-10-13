@@ -33,6 +33,16 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
                     check(buffer.readableBytes() == 61_480, "Near-max frame lost bytes at Fabric codec boundary");
                     check(Arrays.equals(frame.bytes(), SharedPayload.CODEC.decode(buffer).fragment().bytes()), "Frame roundtrip changed bytes");
                 } finally { buffer.release(); }
+                byte[] oldHello = ByteBuffer.allocate(9).putInt(1).put((byte) 0).putInt(1).array();
+                var oldFrame = new RegistryFriendlyByteBuf(Unpooled.buffer(), client.level.registryAccess());
+                try {
+                    SharedPayload.CODEC.encode(oldFrame, new SharedPayload(SharedTransfers.split(UUID.randomUUID(), oldHello).getFirst()));
+                    check(oldFrame.readableBytes() == 49 && oldFrame.getInt(oldFrame.readerIndex()) == 45
+                        && oldFrame.getInt(oldFrame.readerIndex() + 4) == 1,
+                        "Registered payload codec did not emit exact v1 frame for legacy Hello");
+                    check(Arrays.equals(oldHello, SharedPayload.CODEC.decode(oldFrame).fragment().bytes()),
+                        "Registered codec did not accept exact v1 Hello frame");
+                } finally { oldFrame.release(); }
                 var invalid = new RegistryFriendlyByteBuf(Unpooled.buffer(), client.level.registryAccess());
                 try {
                     invalid.writeInt(Integer.MAX_VALUE);
@@ -87,6 +97,7 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
             verifyOrdinaryRespawn(context, server);
             if (Boolean.getBoolean("mcmateriallist.transportTest.respawnFirst")) verifyAbsentInitiatorEvents(context, server);
             verifyAdminSnapshotInterleaving(context);
+            verifyLegacyNegotiationSocket(context);
           }
           for (int i = 0; i < 100 && server.computeOnServer(TransportLifecycleProbe::slots) != 0; i++) context.waitTicks(1);
           check(server.computeOnServer(TransportLifecycleProbe::slots) == 0,
@@ -456,6 +467,34 @@ public final class SharedTransportClientTest implements FabricClientGameTest {
     private static <T> T await(CompletionStage<T> stage) {
         try { return stage.toCompletableFuture().get(20, TimeUnit.SECONDS); }
         catch (Exception failure) { throw new AssertionError("Test setup authority failed", failure); }
+    }
+    private static void verifyLegacyNegotiationSocket(ClientGameTestContext context) {
+        byte[] oldHello = ByteBuffer.allocate(9).putInt(1).put((byte) 0).putInt(1).array();
+        context.runOnClient(client -> {
+            var fragment = SharedTransfers.split(UUID.randomUUID(), oldHello).getFirst();
+            net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(new SharedPayload(fragment));
+        });
+        context.waitFor(client -> SharedClientNetworking.diagnostic() == SharedControlPayload.Reason.UNSUPPORTED, 600);
+        context.runOnClient(client -> check(SharedClientNetworking.state().status()
+            == dev.mcmateriallist.core.shared.transport.SharedClientState.Status.UNSUPPORTED,
+            "Actual registered v1 client Hello did not become UNSUPPORTED"));
+        context.runOnClient(client -> check(SharedClientNetworking.negotiate(), "Current renegotiation unavailable"));
+        context.waitFor(client -> SharedClientNetworking.state().capabilities() != null, 600);
+        LegacyPeerFixture.begin();
+        try {
+            context.runOnClient(client -> check(SharedClientNetworking.negotiate(), "Old-peer fixture negotiation unavailable"));
+            context.waitFor(client -> LegacyPeerFixture.sawFrame(), 600);
+            context.waitFor(client -> SharedClientNetworking.state().status()
+                == dev.mcmateriallist.core.shared.transport.SharedClientState.Status.UNSUPPORTED, 600);
+            check(LegacyPeerFixture.accepted(),
+                "Frozen v1 peer rejected actual outgoing negotiation frame/message headers or inner version");
+            context.runOnClient(client -> check(SharedClientNetworking.diagnostic() == SharedControlPayload.Reason.UNSUPPORTED,
+                "Registered old-peer diagnostic did not reach client UNSUPPORTED state"));
+        } finally { LegacyPeerFixture.finish(); }
+        context.runOnClient(client -> check(SharedClientNetworking.negotiate(), "Post-fixture negotiation unavailable"));
+        context.waitFor(client -> SharedClientNetworking.state().capabilities() != null, 600);
+        org.slf4j.LoggerFactory.getLogger("mcmateriallist-transport-test")
+            .info("Shared transport historical v1 Hello and test-only frozen old-peer parser PASS");
     }
     private static void verifyAdminSnapshotInterleaving(ClientGameTestContext context) {
         Map<MaterialTaskId, Long> materials = new LinkedHashMap<>();

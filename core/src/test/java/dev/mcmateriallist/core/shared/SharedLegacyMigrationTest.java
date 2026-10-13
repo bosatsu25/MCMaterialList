@@ -63,9 +63,12 @@ class SharedLegacyMigrationTest {
         assertEquals(nextClient, new SharedClientStore(root).load(c.placement()).value());
         assertArrayEquals(worldBytes, Files.readAllBytes(world));
     }
-    @Test void legacyWireIsUnsupportedEvenThoughPersistenceMigrates() {
+    @Test void legacyWireAcceptsOnlyHelloNegotiationWhilePersistenceMigrates() {
         byte[] helloV1 = {0, 0, 0, 1, 0, 0, 0, 0, 1};
-        assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(helloV1));
+        assertEquals(new SharedMessage.Hello(1), SharedProtocol.decode(helloV1));
+        byte[] applicationV1 = SharedProtocol.encode(new SharedMessage.ListProjects(id(30), id(31)));
+        applicationV1[3] = 1;
+        assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decode(applicationV1));
         assertThrows(IllegalArgumentException.class, () -> SharedProtocol.decodeLegacyPersisted(helloV1));
     }
 
