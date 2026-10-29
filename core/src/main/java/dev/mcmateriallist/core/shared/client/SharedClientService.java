@@ -84,6 +84,42 @@ public final class SharedClientService implements AutoCloseable {
             return before.journal(operations);
         }));
     }
+    /**
+     * Settles an unknown original from a replay of that exact command by the same authenticated actor, typically on a
+     * replacement connection after reconnecting. The server keys durable replay by project + actor + operation ID, so
+     * any connection of that actor receives the original retained outcome, executes a never-delivered command once, or
+     * reports CONFLICT once the row has moved on. Only {@link #definitive} answers settle; a transient refusal of the
+     * replay itself proves nothing about the original send and leaves it unknown for a later replay.
+     */
+    public CompletableFuture<SharedClientStore.Result> resolve(LocalPlacementId placement, UUID actor, SharedEvents.CommandResult result) {
+        Objects.requireNonNull(actor); Objects.requireNonNull(result);
+        return submit(() -> change(placement, false, before -> {
+            require(definitive(result.status()));
+            var found = before.operations().stream().filter(operation -> operation.command().operationId().equals(result.operationId())).findFirst();
+            require(found.isPresent()); var operation = found.orElseThrow();
+            require(operation.original().actor().equals(actor) && operation.original().scope().equals(result.scope())
+                && (result.row() == null || operation.command().taskId().equals(result.row().taskId())));
+            var confirmation = new SharedClientArchive.Confirmation(result.status(), result.projectRevision());
+            if (operation.confirmation() != null) { require(operation.confirmation().equals(confirmation)); return before; }
+            List<SharedClientArchive.Operation> operations = new ArrayList<>(before.operations());
+            operations.set(operations.indexOf(operation), new SharedClientArchive.Operation(operation.kind(), operation.original(),
+                operation.connection(), operation.command(), confirmation));
+            // Like confirm: the replayed answer resolves only the original journal, never the binding or its cache.
+            return before.journal(operations);
+        }));
+    }
+    /** Server answers that end an original command's uncertainty when returned for its exact replay. */
+    public static boolean definitive(SharedEvents.Status status) {
+        return switch (Objects.requireNonNull(status)) {
+            case OK, CONFLICT, DENIED, MISSING, INVALID_INPUT -> true;
+            case SAVE_FAILED, UNAVAILABLE, CAPACITY, CLOSED -> false;
+        };
+    }
+    /** Unknown originals of this actor/scope in journal order; replay resends each unchanged. */
+    public static List<SharedClientArchive.Operation> unknown(SharedClientArchive archive, UUID actor, ProjectScope scope) {
+        return archive.operations().stream().filter(operation -> operation.confirmation() == null
+            && operation.original().actor().equals(actor) && operation.original().scope().equals(scope)).toList();
+    }
     public CompletableFuture<SharedClientStore.Result> cache(LocalPlacementId placement, DatasetKind kind,
         SharedClientArchive.Reference original, ProjectSnapshot snapshot, long cursor) {
         Objects.requireNonNull(kind); Objects.requireNonNull(original); Objects.requireNonNull(snapshot);

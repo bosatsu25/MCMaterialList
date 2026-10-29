@@ -1,6 +1,6 @@
 # MCMaterialList
 
-Material gathering and region building work state integrated with Litematica. Phase 3 integration adds explicit server projects, Viewer/Member/Administrator role management, and shared work on the existing material and region screens while preserving durable local work. Reconnect/lost-outcome recovery and external two-client acceptance remain pending.
+Material gathering and region building work state integrated with Litematica. Phase 3 integration adds explicit server projects, Viewer/Member/Administrator role management, and shared work on the existing material and region screens while preserving durable local work. Issue #7 adds reconnect restoration and lost-outcome resolution by exact replay; external two-client acceptance remains pending.
 
 Pinned baseline: Minecraft **26.2**, Fabric Loader **0.19.3**, Fabric API **0.154.0+26.2**, Litematica **0.28.3**, MaLiLib **0.29.2**, JDK **25**, Gradle **9.7.1**, Loom **1.17.20**.
 
@@ -22,7 +22,7 @@ Shared faces/details allow a Member to claim an unassigned task, complete it wit
 
 Total/Missing/Available, multiplier, Ignore, Hide Done and personal enabled-region counts remain local observations. They never change shared task definitions or progress denominators. Creating a project requires a fresh full count with every original region enabled and untransformed; normal refresh of an existing binding may display partial personal counts. A changed schematic source, dimension, placement origin/rotation/mirror or original region definition blocks shared task editing. A current Administrator can explicitly confirm **Update shared definition...** after a fresh full count and unchanged loaded source; this replaces global material and region definitions and the placement baseline, then requires a new join.
 
-Unsupported servers leave local work usable. Unknown sent commands block dependent shared edits and remain attached to their original account/project, even after switching to local mode. **Recover metadata**, then **Confirm recovery**, preserves damaged bytes but cannot establish the outcome of a command missing from a backup; shared writes stay blocked, and local work remains available. See [Phase 3A usage, persistence and verification](docs/phase-3-shared-work.md) for these limits.
+Unsupported servers leave local work usable. Unknown sent commands block dependent shared edits and remain attached to their original account/project, even after switching to local mode. After a fresh snapshot of that project, the client resends the exact original with the same operation ID; the server returns its recorded outcome, executes it once if it never arrived, or reports a conflict, and that answer settles it. Reconnecting to the same world and account re-joins the project the previous connection was synchronized to. **Recover metadata**, then **Confirm recovery**, preserves damaged bytes but cannot establish the outcome of a command missing from a backup; shared writes stay blocked, and local work remains available. See [Phase 3A usage, persistence and verification](docs/phase-3-shared-work.md) for these limits.
 
 ## Build and verification
 

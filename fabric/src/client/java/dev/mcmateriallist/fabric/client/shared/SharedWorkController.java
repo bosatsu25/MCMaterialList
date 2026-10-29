@@ -7,6 +7,7 @@ import dev.mcmateriallist.core.shared.client.*;
 import dev.mcmateriallist.core.shared.transport.SharedClientState;
 import dev.mcmateriallist.core.work.*;
 import dev.mcmateriallist.fabric.client.MCMaterialListClient;
+import java.lang.ref.WeakReference;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
@@ -17,7 +18,7 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
 
 /** Render-thread coordinator. Its service owns one bounded disk queue and immutable save units. */
 public final class SharedWorkController {
-    private static final int OPEN_PLACEMENTS = 16, REQUESTS = 16;
+    private static final int OPEN_PLACEMENTS = 16, REQUESTS = 16, REPLAYS = 64;
     static final class Entry {
         final LocalPlacementId placement;
         SharedClientArchive archive;
@@ -29,6 +30,8 @@ public final class SharedWorkController {
         final Set<ProjectScope> hidden = new HashSet<>();
         final Set<UUID> confirming = new HashSet<>();
         final Set<DatasetKind> caching = EnumSet.noneOf(DatasetKind.class);
+        /** Latest native backend per list; weak, so a closed screen is never kept alive for reconnect restoration. */
+        final Map<DatasetKind, WeakReference<SharedWorkBackend>> backends = new EnumMap<>(DatasetKind.class);
         Entry(LocalPlacementId placement) { this.placement = placement; }
         SharedClientArchive.Binding binding(DatasetKind kind) { return archive == null ? null : archive.binding(kind); }
     }
@@ -37,6 +40,8 @@ public final class SharedWorkController {
         SharedClientArchive.Reference previous, NativeSharedCapture.Capture capture, String digest,
         boolean select, long started) {}
     private record Admin(Entry entry, SharedClientArchive.Reference original, ClientPacketListener listener, long started) {}
+    /** One replay per original command, connection and fresh snapshot installation. */
+    private record Replayed(ClientPacketListener listener, long installation) {}
     private final SharedClientService service;
     private final Map<LocalPlacementId, Entry> entries = new LinkedHashMap<>();
     private final Map<UUID, Verified> verified = new HashMap<>();
@@ -44,6 +49,13 @@ public final class SharedWorkController {
     private final Map<UUID, Admin> admins = new LinkedHashMap<>();
     private final ThreadPoolExecutor digests = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
         new ArrayBlockingQueue<>(4), task -> { Thread thread = new Thread(task, "mcmateriallist-shared-source-read"); thread.setDaemon(false); return thread; });
+    private final Map<UUID, Replayed> replays = new LinkedHashMap<>();
+    /** Connection and installation for which each binding's source proof was last validated. */
+    private final Map<UUID, Replayed> proofs = new HashMap<>();
+    /** Scope the latest connection was synchronized to; reconnect restores it once, before any new selection. */
+    private ProjectScope subscribed;
+    private UUID subscribedActor;
+    private ClientPacketListener restored;
     private UUID lastActor;
     private ProjectScope lastScope;
     private SharedClientState.Status lastStatus;
@@ -62,6 +74,9 @@ public final class SharedWorkController {
             entry.loading = false; publish(entry, result, failure);
         }));
         return entry;
+    }
+    void register(SharedWorkBackend backend) {
+        var entry = backend.entry(); if (entry != null && !closed) entry.backends.put(backend.kind(), new WeakReference<>(backend));
     }
     static UUID actor() { var player = Minecraft.getInstance().player; return player == null ? null : player.getUUID(); }
     static SharedClientArchive.Reference reference(Entry entry, DatasetKind kind) {
@@ -332,6 +347,9 @@ public final class SharedWorkController {
             verified.clear(); for (Entry entry : entries.values()) hide(entry, null);
         }
         if (actor != null) lastActor = actor;
+        if (state.synchronizedState() && state.scope() != null && actor != null) { subscribed = state.scope(); subscribedActor = actor; }
+        if (state.status() == SharedClientState.Status.REVOKED && Objects.equals(state.scope(), subscribed)) subscribed = null;
+        restore(state, actor);
         if (state.status() != lastStatus || !Objects.equals(state.scope(), lastScope)) {
             if (state.status() == SharedClientState.Status.REVOKED || state.status() == SharedClientState.Status.RESYNC_REQUIRED) {
                 for (Entry entry : entries.values()) hide(entry, state.scope());
@@ -386,6 +404,24 @@ public final class SharedWorkController {
             if (entry.archive == null) continue;
             for (var operation : entry.archive.operations()) {
                 if (operation.confirmation() != null || !operation.original().actor().equals(actor) || entry.confirming.contains(operation.command().operationId())) continue;
+                UUID id = operation.command().operationId();
+                var replayed = SharedClientNetworking.replayed(actor, operation.original().scope(), id);
+                if (replayed != null) {
+                    // A transient refusal of the replay itself proves nothing; the original stays unknown until a later installation.
+                    if (!SharedClientService.definitive(replayed.status())) continue;
+                    entry.confirming.add(id);
+                    complete(entry, service.resolve(entry.placement, actor, replayed), saved -> {
+                        entry.confirming.remove(id);
+                        if (!saved.ok()) return;
+                        replays.remove(id);
+                        // The replay was answered after a fresh contiguous installation, so the view is not stale and
+                        // stays visible; access or definition changes still arrive as their own invalidation/revocation.
+                        var current = reference(entry, operation.kind());
+                        if (current != null && current.actor().equals(operation.original().actor()) && current.scope().equals(operation.original().scope()))
+                            setReason(entry, "result." + replayed.status().name());
+                    });
+                    continue;
+                }
                 var original = new SharedClientNetworking.AdmissionContext(operation.original().actor(), operation.connection(), operation.original().scope());
                 var result = SharedClientNetworking.result(original, operation.command().operationId()); if (result == null) continue;
                 entry.confirming.add(operation.command().operationId());
@@ -398,6 +434,7 @@ public final class SharedWorkController {
                     }
                 });
             }
+            replay(entry, state, actor);
             if (!state.synchronizedState() || state.snapshot() == null || entry.storage != StoreStatus.OK) continue;
             for (var kind : DatasetKind.values()) {
                 var binding = entry.binding(kind); var ref = binding.shared();
@@ -413,6 +450,74 @@ public final class SharedWorkController {
             }
         }
     }
+    /**
+     * Resends each unknown original once per fresh installation of its scope, for the same account, only while that
+     * scope's binding holds source provenance verified against the installed manifest. Anything the previous transport
+     * sent is either reflected in that snapshot or lost with its cleared transfers, so the server's replay answer
+     * settles it; the journal is never cancelled, remapped or answered locally.
+     */
+    private void replay(Entry entry, SharedClientState state, UUID actor) {
+        if (actor == null || entry.archive == null || entry.busy != 0 || !state.synchronizedState() || state.snapshot() == null) return;
+        var snapshot = state.snapshot();
+        var due = new Replayed(Minecraft.getInstance().getConnection(), state.installations());
+        proofs.keySet().retainAll(verified.keySet());
+        boolean proven = false;
+        for (var kind : DatasetKind.values()) {
+            var ref = reference(entry, kind); var proof = ref == null ? null : verified.get(ref.bindingId());
+            // The proof must come from this installation's own join validation, never from an earlier connection.
+            if (ref == null || proof == null || !ref.actor().equals(actor) || !ref.scope().equals(state.scope())
+                || entry.hidden.contains(ref.scope()) || !due.equals(proofs.get(ref.bindingId()))
+                || !proof.source().matches(snapshot.manifest().definition(), proof.digest())) continue;
+            var held = entry.backends.get(kind); var backend = held == null ? null : held.get();
+            if (backend != null) {
+                var current = backend.capture(false);
+                if (!current.ok() || !proof.source().equals(current.source())) continue;
+            }
+            proven = true;
+        }
+        // A replay answer of DENIED cannot distinguish "not executed" from "retained outcome withheld after a role
+        // change", so only replay what the current role could still submit.
+        if (!proven || !snapshot.canWrite(actor)) return;
+        for (var operation : SharedClientService.unknown(entry.archive, actor, state.scope())) {
+            UUID id = operation.command().operationId(); var intent = operation.command().intent();
+            if ((intent instanceof SharedCommand.Assign || intent instanceof SharedCommand.ClearAssignment) && !snapshot.canAdminister(actor)) continue;
+            if (entry.confirming.contains(id) || due.equals(replays.get(id))) continue;
+            if (!SharedClientNetworking.replay(operation.command(), actor)) continue;
+            if (replays.size() >= REPLAYS && !replays.containsKey(id)) replays.remove(replays.keySet().iterator().next());
+            replays.put(id, due);
+        }
+    }
+    /**
+     * Reconnect: rejoin the scope the previous connection was synchronized to, once per connection and only while the
+     * user has not selected anything on it. This is the same source-verified join as Refresh work, so a changed
+     * definition, revoked access or wrong world still blocks shared edits instead of being accepted silently.
+     */
+    private void restore(SharedClientState state, UUID actor) {
+        var listener = Minecraft.getInstance().getConnection();
+        if (listener == null || listener == restored || actor == null) return;
+        if (state.status() == SharedClientState.Status.UNAVAILABLE || state.status() == SharedClientState.Status.NEGOTIATING) return;
+        var target = subscribed;
+        if (state.status() != SharedClientState.Status.AVAILABLE || target == null || !actor.equals(subscribedActor)
+            || !state.capabilities().worldNamespace().equals(target.worldNamespace())) { restored = listener; return; }
+        for (Entry entry : entries.values()) for (var kind : DatasetKind.values()) {
+            var held = entry.backends.get(kind); var backend = held == null ? null : held.get(); var ref = reference(entry, kind);
+            if (backend == null || ref == null || !ref.actor().equals(actor) || !ref.scope().equals(target)) continue;
+            // Wait for this entry to settle; reopening its screen supplies a fresh backend if this one is gone.
+            if (backend.pending() || entry.storage != StoreStatus.OK || requests.size() >= REQUESTS
+                || requests.values().stream().anyMatch(request -> request.backend().entry() == entry)) return;
+            restored = listener;
+            prepare(backend, false, (capture, digest) -> {
+                if (listener != Minecraft.getInstance().getConnection() || closed || !Objects.equals(ref, reference(entry, kind))
+                    || SharedClientNetworking.state().status() != SharedClientState.Status.AVAILABLE) { setReason(entry, null); return; }
+                try {
+                    UUID request = SharedClientNetworking.join(ref.scope());
+                    requests.put(request, new Request(backend, actor, listener, ref, capture, digest, false, System.nanoTime()));
+                    setReason(entry, "joining");
+                } catch (IllegalStateException unavailable) { setReason(entry, "request_failed"); }
+            });
+            return;
+        }
+    }
     private void validate(Entry entry, DatasetKind kind, NativeSharedCapture.Source source, String digest, ClientPacketListener listener) {
         var ref = reference(entry, kind); if (ref == null) return;
         var state = SharedClientNetworking.state();
@@ -420,7 +525,8 @@ public final class SharedWorkController {
             || !ref.scope().equals(state.scope()) || !source.matches(state.snapshot().manifest().definition(), digest)) {
             hide(entry, ref.scope()); setReason(entry, "join_required"); return;
         }
-        verified.put(ref.bindingId(), new Verified(source, digest)); entry.hidden.remove(ref.scope()); entry.reason = null; entry.version++;
+        verified.put(ref.bindingId(), new Verified(source, digest)); proofs.put(ref.bindingId(), new Replayed(listener, state.installations()));
+        entry.hidden.remove(ref.scope()); entry.reason = null; entry.version++;
     }
     private void hide(Entry entry, ProjectScope scope) {
         if (entry.archive == null) return;
@@ -458,5 +564,5 @@ public final class SharedWorkController {
     }
     static void setReason(Entry entry, String reason) { if (entry != null) { entry.reason = reason; entry.version++; } }
     private void later(Runnable callback) { Minecraft.getInstance().schedule(() -> { if (!closed) callback.run(); }); }
-    public void shutdown() { closed = true; requests.clear(); admins.clear(); verified.clear(); digests.shutdown(); service.shutdown(); }
+    public void shutdown() { closed = true; requests.clear(); admins.clear(); verified.clear(); replays.clear(); proofs.clear(); digests.shutdown(); service.shutdown(); }
 }

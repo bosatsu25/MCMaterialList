@@ -29,8 +29,10 @@ public final class SharedClientNetworking {
     private record Decoded(SharedMessage message) {}
     private record Admission(SharedCommand command, boolean durable, boolean sourceAllowed,
         DurableAdmission journal, CompletableFuture<Boolean> result) {}
-    private record Pending(SharedCommand command, AdmissionContext context) {}
-    private record Confirmed(SharedEvents.CommandResult result, AdmissionContext context) {}
+    /** installation: the snapshot installation current when this exact command was last encoded on its connection. */
+    private record Pending(SharedCommand command, AdmissionContext context, long installation, boolean replay) {}
+    /** replay: answered a resend, so only the definitive-status policy may settle the original journal. */
+    private record Confirmed(SharedEvents.CommandResult result, AdmissionContext context, boolean replay) {}
     private static final class Connection {
         final UUID token = UUID.randomUUID();
         final ClientPacketListener listener;
@@ -192,11 +194,42 @@ public final class SharedClientNetworking {
     public static SharedEvents.CommandResult result(AdmissionContext original, UUID operation) {
         Objects.requireNonNull(original); Objects.requireNonNull(operation);
         Confirmed confirmed = results.get(operation); Connection current = connection;
-        if (confirmed == null || !confirmed.context().equals(original)
+        if (confirmed == null || confirmed.replay() || !confirmed.context().equals(original)
             || !confirmed.result().operationId().equals(operation) || !confirmed.result().scope().equals(original.scope())
             || current == null || !current.open || current.listener != Minecraft.getInstance().getConnection()
             || !current.token.equals(original.connectionId()) || Minecraft.getInstance().player == null
             || !Minecraft.getInstance().player.getUUID().equals(original.actor())) return null;
+        return confirmed.result();
+    }
+    /**
+     * Resends one exact original journal command on the live connection after it installed a fresh snapshot of that
+     * command's scope. The server keys durable replay by project + authenticated actor + operation ID: it returns the
+     * retained original outcome, executes a never-delivered command once, or rejects a stale one against the latest row.
+     * The original expected versions are deliberately unchanged, so no client row/version gate applies here. At most one
+     * send per command and snapshot installation; this never creates a new intent or an offline queue.
+     */
+    public static boolean replay(SharedCommand command, UUID actor) {
+        Objects.requireNonNull(command); Objects.requireNonNull(actor);
+        Minecraft client = Minecraft.getInstance(); Connection current = connection;
+        if (!client.isSameThread() || current == null || !current.open || current.listener != client.getConnection()
+            || client.player == null || !client.player.getUUID().equals(actor) || !ClientPlayNetworking.canSend(SharedPayload.TYPE)
+            || !state.synchronizedState() || state.snapshot() == null || !state.snapshot().scope().equals(command.scope())) return false;
+        Pending pending = unresolved.get(command.operationId());
+        if (pending != null && pending.context().connectionId().equals(current.token) && pending.installation() == state.installations()) return false;
+        if (pending == null && unresolved.size() >= LIMIT) return false;
+        if (!current.encode(new SharedMessage.TaskCommand(command))) return false;
+        unresolved.put(command.operationId(), new Pending(command, new AdmissionContext(actor, current.token, command.scope()), state.installations(), true));
+        return true;
+    }
+    /** Answer to a replay by this live actor/connection for the given scope; settlement still requires a definitive status. */
+    public static SharedEvents.CommandResult replayed(UUID actor, ProjectScope scope, UUID operation) {
+        Objects.requireNonNull(actor); Objects.requireNonNull(scope); Objects.requireNonNull(operation);
+        Confirmed confirmed = results.get(operation); Connection current = connection;
+        if (confirmed == null || !confirmed.replay() || current == null || !current.open
+            || current.listener != Minecraft.getInstance().getConnection() || !current.token.equals(confirmed.context().connectionId())
+            || !confirmed.context().actor().equals(actor) || !confirmed.context().scope().equals(scope)
+            || !confirmed.result().scope().equals(scope) || !confirmed.result().operationId().equals(operation)
+            || Minecraft.getInstance().player == null || !Minecraft.getInstance().player.getUUID().equals(actor)) return null;
         return confirmed.result();
     }
     /** Only the original live actor/connection and currently selected scope may observe command contents. */
@@ -232,7 +265,7 @@ public final class SharedClientNetworking {
         CompletableFuture<Boolean> sent = new CompletableFuture<>();
         CompletionStage<Boolean> durable;
         AdmissionContext context = new AdmissionContext(Minecraft.getInstance().player.getUUID(), current.token, command.scope());
-        unresolved.put(command.operationId(), new Pending(command, context));
+        unresolved.put(command.operationId(), new Pending(command, context, state.installations(), false));
         try { durable = Objects.requireNonNull(journal.persist(context, command)); }
         catch (RuntimeException failure) { unresolved.remove(command.operationId()); return CompletableFuture.completedFuture(false); }
         durable.whenComplete((admitted, failure) -> {
@@ -288,7 +321,12 @@ public final class SharedClientNetworking {
             SharedCommand original = pending.command();
             if (!original.scope().equals(result.result().scope())
                 || (result.result().row() != null && !original.taskId().equals(result.result().row().taskId()))) return;
-            unresolved.remove(original.operationId()); retain(results, original.operationId(), new Confirmed(result.result(), pending.context())); state.receive(message);
+            if (pending.replay() && !dev.mcmateriallist.core.shared.client.SharedClientService.definitive(result.result().status())) {
+                // Possibly the original's own answer overtaken by a same-connection replay: keep awaiting a definitive one.
+                state.receive(message); return;
+            }
+            unresolved.remove(original.operationId());
+            retain(results, original.operationId(), new Confirmed(result.result(), pending.context(), pending.replay())); state.receive(message);
         } else {
             state.receive(message);
             if (message instanceof SharedMessage.AccessRevoked revoked) {
