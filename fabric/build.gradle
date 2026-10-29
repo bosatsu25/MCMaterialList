@@ -339,21 +339,21 @@ tasks.register('verifyMultiplayer') {
         project.delete(root)
         [coordination, consoles, serverDir, alphaDir, betaDir].each { it.mkdirs() }
         [serverDir, alphaDir, betaDir].each { new File(it, 'eula.txt').text = 'eula=true\n' }
-        def write = { String name, String value ->
+        def write = { name, value ->
             File temporary = new File(coordination, name + '.harness.tmp')
             temporary.text = value
             java.nio.file.Files.move(temporary.toPath(), new File(coordination, name).toPath(),
                 java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
         }
         def configureServer = { ->
-            int port
+            def port
             new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress()).withCloseable { port = it.localPort }
             // A fresh port per boot avoids depending on listen-socket reuse after the previous process exits.
             new File(serverDir, 'server.properties').text = "server-ip=localhost\nserver-port=${port}\nonline-mode=false\n" +
                 "level-name=multiplayer-world\nview-distance=2\nsimulation-distance=2\nspawn-protection=0\nsync-chunk-writes=false\nmax-players=4\n"
             write('port', port.toString())
         }
-        def commandLine = { String taskName ->
+        def commandLine = { taskName ->
             def task = tasks.named(taskName).get()
             List<String> line = [task.javaLauncher.get().executablePath.asFile.absolutePath]
             line.addAll(task.allJvmArgs.collect { it.toString() })
@@ -362,7 +362,7 @@ tasks.register('verifyMultiplayer') {
             task.argumentProviders.each { provider -> provider.asArguments().each { line.add(it.toString()) } }
             line
         }
-        def launch = { String taskName, File directory, String label ->
+        def launch = { taskName, directory, label ->
             List<String> line = commandLine(taskName)
             if (label != 'server' && System.getenv('DISPLAY') == null && new File('/usr/bin/xvfb-run').exists())
                 line = ['xvfb-run', '--auto-servernum'] + line
@@ -370,16 +370,17 @@ tasks.register('verifyMultiplayer') {
             new ProcessBuilder(line).directory(directory).redirectErrorStream(true)
                 .redirectOutput(ProcessBuilder.Redirect.appendTo(new File(consoles, label + '.log'))).start()
         }
-        def waitUntil = { String what, long seconds, Closure<Boolean> condition, List<Process> required ->
-            long deadline = System.nanoTime() + seconds * 1_000_000_000L
+        // Untyped closure parameters: a primitive long parameter here fails JVM verification of the generated closure.
+        def waitUntil = { what, seconds, condition, required ->
+            long deadline = System.nanoTime() + (seconds as long) * 1_000_000_000L
             while (!condition.call()) {
                 required.each { if (!it.alive) throw new GradleException("Multiplayer harness process exited while waiting for ${what}") }
                 if (System.nanoTime() - deadline > 0) throw new GradleException("Multiplayer harness timed out waiting for ${what}")
                 Thread.sleep(200)
             }
         }
-        def ready = { int boot -> def file = new File(coordination, 'server-ready'); file.exists() && file.text.trim() == boot.toString() }
-        def retainClassLoad = { int boot ->
+        def ready = { boot -> def file = new File(coordination, 'server-ready'); file.exists() && file.text.trim() == boot.toString() }
+        def retainClassLoad = { boot ->
             File log = new File(serverDir, 'class-load.log')
             if (log.exists()) java.nio.file.Files.move(log.toPath(), new File(serverDir, "class-load-${boot}.log").toPath(),
                 java.nio.file.StandardCopyOption.REPLACE_EXISTING)
