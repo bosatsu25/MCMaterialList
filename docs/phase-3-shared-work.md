@@ -1,6 +1,6 @@
 # Phase 3 shared work integration
 
-This integration build connects the accepted [shared authority](SHARED_PROTOCOL.md) and [Fabric transport](SHARED_TRANSPORT.md) to the existing native material and region screens, including Viewer/Member/Administrator management. It does not claim complete multiplayer acceptance or release readiness. Core membership policy, durable migration, and native role controls are implemented for Issue #6; reconnect/lost-outcome resolution, fault acceptance, and external two-client validation remain separate work (Issues #7–#8).
+This integration build connects the accepted [shared authority](SHARED_PROTOCOL.md) and [Fabric transport](SHARED_TRANSPORT.md) to the existing native material and region screens, including Viewer/Member/Administrator management. It does not claim complete multiplayer acceptance or release readiness. Core membership policy, durable migration, and native role controls are implemented for Issue #6. Issue #7 adds reconnect restoration and lost-outcome resolution by exact replay; fault acceptance and external two-client validation remain separate work (Issue #8).
 
 ## Use local or shared work deliberately
 
@@ -34,9 +34,9 @@ File metadata probes are only an early guard: matching timestamps, sizes or Wind
 | Partial or stale full count | Project creation is refused; restore full original counting scope and recount. |
 | Source digest, original definitions, dimension or placement baseline changed | Shared task editing is blocked. A current Administrator may deliberately update the global definition from a fresh full native count and exact unchanged loaded source, then explicitly synchronize. Other roles need the matching saved source/baseline. |
 | Another project selected, invalidated snapshot or stale version | Shared writes stay blocked until an authorized matching snapshot is joined. |
-| Missing/incompatible server, disconnect or different world/account | No offline shared edits; ordinary local work remains usable. Previous-account private presentation is hidden. |
+| Missing/incompatible server, disconnect or different world/account | No offline shared edits; the last confirmed rows stay visible as unsynchronized and ordinary local work remains usable. Previous-account private presentation is hidden. After reconnecting to the same world and account, the scope the previous connection was synchronized to is joined again through the normal source-verified Refresh path, once and only before any new selection on that connection. |
 | Admission/storage/backpressure failure | No optimistic row update. An admitted command with no authoritative result remains unknown. |
-| Unknown original command | Dependent writes remain blocked for that account/project. Mode changes do not cancel or remap it. Automatic replay/resolution is not implemented in Phase 3A. |
+| Unknown original command | Dependent writes remain blocked for that account/project. Mode changes do not cancel or remap it. After a fresh snapshot of its scope is installed with verified source provenance, the exact original command is resent once with the same operation ID and expected versions; a definitive answer settles it (see Issue #7 below). |
 | Sharing metadata recovery | Recover explicitly in two steps. Local work remains usable, but recovered shared writes stay blocked because the backup may omit a sent command. |
 
 ## Client save and command boundary
@@ -57,7 +57,7 @@ Every backup omits derivative shared snapshots while preserving the exact prior 
 
 Explicit backup recovery retains damaged primary bytes, restores metadata/journal without cached rows and persists `recoveredJournalUncertain`. A fresh snapshot, local switch or account/binding change cannot clear that flag: the backup may predate a sent operation. Recovery is metadata/journal recovery, not a server project rollback. Future confirmed region-copy/detach can extend the same save unit; Unshare/copy is not implemented here.
 
-The producer's durable-admission callback saves the exact original operation before sending. A current-scope ACK never advances the contiguous cache cursor. A legitimate late original-context result confirms only its original journal entry, even after switching to local mode; it cannot alter local rows or a replacement binding. Unconfirmed operations survive mode changes, disconnects and account changes without automatic replay. Known rejected/conflicting outcomes require fresh synchronization where state may be stale.
+The producer's durable-admission callback saves the exact original operation before sending. A current-scope ACK never advances the contiguous cache cursor. A legitimate late original-context result confirms only its original journal entry, even after switching to local mode; it cannot alter local rows or a replacement binding. Unconfirmed operations survive mode changes, disconnects and account changes. They are resent only as the exact original by the same account after a fresh snapshot installation of their scope (Issue #7). Known rejected/conflicting outcomes require fresh synchronization where state may be stale.
 
 ## Explicit capacities
 
@@ -107,7 +107,7 @@ Evidence is retained under ignored `core/build/test-results/test`, `fabric/build
 
 ## Remaining acceptance
 
-Lost-outcome/reconnect recovery, fault/performance acceptance, external authenticated two-client AC-17 evidence and release/signing/license decisions remain unclaimed. The in-process integration is not a substitute for those later gates. The intermediate `0.1.0-phase.3a` version communicates that scope.
+Fault/performance acceptance, external authenticated two-client AC-17 evidence and release/signing/license decisions remain unclaimed. Issue #7 reconnect and lost-outcome handling is verified by core tests and the retained in-process gates, not by two external clients. The in-process integration is not a substitute for those later gates. The intermediate `0.1.0-phase.3a` version communicates that scope.
 
 ## Issue #6 core membership and migration
 
@@ -120,3 +120,21 @@ Current membership and privileged-intent capability are checked before operation
 Wire protocol 2 carries the complete role map and explicit SetMembership role/removal intent. Version-1 network messages are unsupported and require the existing local-fallback path; the explicit legacy decoder accepts only stored schema-1 project archives and the schema-1 client's embedded Snapshot/TaskCommand blobs. It is not a network compatibility path. Literal synthetic fixtures captured with the merged version-1 codec pin world/project/list/placement identities, generations, manual rows, retired rows, reconfirmation, independent bindings and original unknown/confirmed journals.
 
 Loading schema 1 does not rewrite primary or backup bytes. A successful compare-and-swap or explicit recovery writes schema 2, preserving identities, versions and journal contents; client recovery still drops derived caches and quarantines an uncertain recovered journal. Future schemas are protected separately for project/client (greater than 2) and world (greater than 1), including reordered fields, decimal/exponent spellings and numeric tokens larger than the JSON reader's lookahead buffer. A legacy payload marked as schema 2 is rejected rather than reinterpreted. The registered receiver now dispatches SetMembership with a connection-derived actor; native controls use current roles and per-intent row permission. No reconnect automation or external authenticated two-client evidence is claimed here.
+
+## Issue #7 concurrency, replay and reconnect
+
+The authority already serializes every command in one queue, checks permission and expected row/manifest versions against the latest durable row, and stores each outcome with its state in one atomic save keyed by project + authenticated actor + operation ID. Issue #7 completes the client side of that contract and pins the authority behavior with acceptance tests.
+
+| Situation | Behavior |
+| --- | --- |
+| Two Members claim one unassigned task at once | The first accepted claim wins. The other is refused against the latest row: under the Issue #6 policy a Member claim of another participant's task is DENIED, with no durable outcome and no row in the reply. That client's subscription receives the winner's delta, which carries the current assignee. |
+| Stale row or manifest version | CONFLICT with the current row; the authority is unchanged. |
+| Complete, undo, then a delayed old complete | The same delayed packet returns its retained original answer without executing again; an old intent under a new operation ID conflicts against the newer row version. Neither restores completion, and the client never adopts an older row version from an ACK or delta. |
+| Duplicate or replayed operation | Executes once, including after a server restart. After the 24-hour/4096-result retention the original expected version is stale, so a replay conflicts instead of executing twice. |
+| Lost ACK, dropped response or disconnect | The original stays unknown in the client journal and blocks dependent writes. When the same account installs a fresh snapshot of that scope with source provenance verified against the installed manifest, the client resends the exact original once per installation. OK, CONFLICT, DENIED, MISSING and INVALID_INPUT settle it; SAVE_FAILED, UNAVAILABLE, CAPACITY and CLOSED refuse only the replay and leave it unknown for a later installation. Settlement records the answer on the original journal entry, keeps its original connection context and never changes a binding or cache. Because the answer follows a fresh contiguous installation, a settled CONFLICT or DENIED is shown as feedback without hiding the current view. An original whose send this client refused locally is replayed the same way: the durable journal cannot prove it never left the client, and the authority applies it only if the row has not moved. |
+| Missing delta, overflow or invalidation | Unchanged from Issue #5/#6: writes stop and a fresh snapshot is required. Reconnect restoration does not apply to these on a live connection, so definition and permission changes are still deliberately re-synchronized. |
+| Reconnect | Same world and account only: the scope the previous connection was synchronized to is joined once, before any user selection on the new connection, through the same source-verified path as Refresh work. A revoked scope is not restored. Without a live native screen bound to that scope, restoration waits until one is opened. |
+
+There is still no offline edit queue and no automatic merge: replay resends only intents that were journaled before a send attempt, with their original expected versions, so the authority accepts them only if the row has not moved since the user acted.
+
+Core verification for this change (JDK 25, core module only): 26 suites and 145 tests with zero failures, errors or skips, including `SharedReconnectTest` for concurrent claims, complete/undo/delayed complete, restart and expired replay, lost-ACK settlement on a replacement connection, never-delivered execution, stale-replay conflicts and installation counting. The native transport, shared UI and dedicated-server gates are recorded by hosted CI on the exact pull-request head.

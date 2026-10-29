@@ -24,6 +24,7 @@ public final class SharedWorkBackend {
             Supplier<SchematicPlacement> placement, Supplier<MaterialListBase> materials, BooleanSupplier ready) {
         this.controller = controller; this.entry = controller.attach(id); this.kind = kind;
         this.placement = placement; this.materials = materials; this.ready = ready;
+        controller.register(this);
     }
     public static String text(String key, Object... args) { return Component.translatable("mcmateriallist.shared." + key, args).getString(); }
     SharedWorkController.Entry entry() { return entry; }

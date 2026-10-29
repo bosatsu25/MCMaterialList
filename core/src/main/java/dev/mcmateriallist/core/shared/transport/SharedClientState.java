@@ -14,6 +14,7 @@ public final class SharedClientState {
     private ProjectSnapshot snapshot;
     private long cursor = -1;
     private long minimumRevision, minimumManifest;
+    private long installations;
     private final List<SharedEvents.ProjectDelta> buffered = new ArrayList<>();
     private SharedMessage.Capabilities capabilities;
     private List<SharedMessage.ProjectSummary> projects = List.of();
@@ -36,7 +37,7 @@ public final class SharedClientState {
             if (status != Status.JOINING) return;
             if (value.status() != SharedEvents.Status.OK) { failed(); return; }
             if (!accepts(value.snapshot())) { if (value.snapshot().scope().equals(scope)) failed(); return; }
-            snapshot = value.snapshot(); cursor = snapshot.projectRevision(); status = Status.SYNCHRONIZED;
+            snapshot = value.snapshot(); cursor = snapshot.projectRevision(); status = Status.SYNCHRONIZED; installations++;
             fence(cursor, snapshot.manifest().version());
             List<SharedEvents.ProjectDelta> pending = List.copyOf(buffered); buffered.clear();
             for (var delta : pending) delta(delta);
@@ -84,6 +85,12 @@ public final class SharedClientState {
     public void failed() { buffered.clear(); status = Status.RESYNC_REQUIRED; }
     public void disconnected() { buffered.clear(); capabilities = null; projects = List.of(); status = Status.DISCONNECTED; }
     public long cursor() { return cursor; }
+    /**
+     * Count of fresh authoritative snapshots installed by this transport lifetime. A journal replay is due once per
+     * installation: anything this connection sent before it was either reflected in that snapshot or lost with
+     * cleared transfers, so resending the exact original then settles it without guessing.
+     */
+    public long installations() { return installations; }
     public ProjectScope scope() { return scope; }
     public boolean synchronizedState() { return status == Status.SYNCHRONIZED; }
     public ProjectSnapshot snapshot() { return snapshot; }
