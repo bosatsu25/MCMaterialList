@@ -324,8 +324,11 @@ tasks.register('verifyMultiplayer') {
     description = 'Run two real client processes against a separate dedicated-server process, restarting the server once.'
     mustRunAfter 'runSharedUiTest', 'verifySharedTransport', 'verifyServerSmoke'
     def launched = ['runMultiplayerServer', 'runMultiplayerAlpha', 'runMultiplayerBeta']
-    // The run tasks are never executed; the harness launches their exact command lines concurrently.
-    dependsOn launched.collect { name -> tasks.named(name).map { task -> task.taskDependencies.getDependencies(task) } }
+    // The run tasks are never executed; the harness launches their exact command lines concurrently. A closure
+    // yields only their prerequisites (a Provider mapped from tasks.named would also carry the run task itself).
+    dependsOn {
+        launched.collectMany { name -> def task = tasks.getByName(name); task.taskDependencies.getDependencies(task) as List }
+    }
     doLast {
         if (!providers.gradleProperty('acceptMinecraftEula').map { it == 'true' }.getOrElse(false)) {
             throw new GradleException('Pass -PacceptMinecraftEula=true only after accepting the Minecraft EULA.')
