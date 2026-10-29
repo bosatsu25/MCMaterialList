@@ -213,6 +213,7 @@ tasks.register('verifyApplicationJar') {
                 || entry.relativePath.pathString.contains('mcmateriallist.test.mixins')
                 || entry.relativePath.pathString.contains('mcmateriallist.transport-test.mixins')
                 || entry.relativePath.pathString.contains('mcmateriallist.shared-ui-test.mixins')
+                || entry.relativePath.pathString.contains('mcmateriallist.multiplayer-test.mixins')
                 || entry.relativePath.pathString.contains('serverSmoke')
                 || entry.relativePath.pathString.startsWith('screenshots/')
                 || entry.relativePath.pathString.startsWith('logs/')
@@ -261,6 +262,189 @@ tasks.named('runSharedUiTest') {
             || !log.text.contains('Shared native UI all assertions PASS')
             || log.text.contains('Client gametests failed with an exception')) {
             throw new GradleException('Shared native UI did not complete every assertion; inspect controlled log.')
+        }
+    }
+}
+
+// Issue #8: two real client processes and one separate dedicated-server process. Test-only; excluded from the JAR.
+sourceSets {
+    multiplayerTest {
+        compileClasspath += sourceSets.gametest.compileClasspath
+        runtimeClasspath += sourceSets.gametest.runtimeClasspath
+    }
+    multiplayerServer {
+        compileClasspath += sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.runtimeClasspath
+    }
+}
+configurations {
+    multiplayerServerImplementation.extendsFrom implementation
+    multiplayerServerRuntimeOnly.extendsFrom runtimeOnly
+}
+dependencies {
+    multiplayerTestImplementation sourceSets.client.output
+    multiplayerServerImplementation sourceSets.main.output
+}
+loom.mods {
+    'mcmateriallist-multiplayer-test' { sourceSet sourceSets.multiplayerTest }
+    'mcmateriallist-multiplayer-server' { sourceSet sourceSets.multiplayerServer }
+}
+def multiplayerCoordination = layout.buildDirectory.dir('run/multiplayer/coordination').get().asFile
+loom.runs {
+    multiplayerServer {
+        server()
+        source sourceSets.multiplayerServer
+        runDir 'build/run/multiplayer/server'
+        vmArg '-Xmx1G'
+        vmArg '-Xlog:class+load=info:file=class-load.log'
+        vmArg "-Dmcmateriallist.multiplayer.dir=${multiplayerCoordination}"
+    }
+    multiplayerAlpha {
+        inherit clientGameTest
+        source sourceSets.multiplayerTest
+        vmArg '-Dfabric.client.gametest.modid=mcmateriallist-multiplayer-test'
+        vmArg '-Dmcmateriallist.multiplayer.role=alpha'
+        vmArg "-Dmcmateriallist.multiplayer.dir=${multiplayerCoordination}"
+        runDir 'build/run/multiplayer/alpha'
+        // Distinct offline accounts: replace the inherited single test username.
+        programArguments.set(['--username', 'McmlAlpha'])
+    }
+    multiplayerBeta {
+        inherit clientGameTest
+        source sourceSets.multiplayerTest
+        vmArg '-Dfabric.client.gametest.modid=mcmateriallist-multiplayer-test'
+        vmArg '-Dmcmateriallist.multiplayer.role=beta'
+        vmArg "-Dmcmateriallist.multiplayer.dir=${multiplayerCoordination}"
+        runDir 'build/run/multiplayer/beta'
+        programArguments.set(['--username', 'McmlBeta'])
+    }
+}
+tasks.register('verifyMultiplayer') {
+    group = 'verification'
+    description = 'Run two real client processes against a separate dedicated-server process, restarting the server once.'
+    mustRunAfter 'runSharedUiTest', 'verifySharedTransport', 'verifyServerSmoke'
+    def launched = ['runMultiplayerServer', 'runMultiplayerAlpha', 'runMultiplayerBeta']
+    // The run tasks are never executed; the harness launches their exact command lines concurrently.
+    dependsOn launched.collect { name -> tasks.named(name).map { task -> task.taskDependencies.getDependencies(task) } }
+    doLast {
+        if (!providers.gradleProperty('acceptMinecraftEula').map { it == 'true' }.getOrElse(false)) {
+            throw new GradleException('Pass -PacceptMinecraftEula=true only after accepting the Minecraft EULA.')
+        }
+        File root = layout.buildDirectory.dir('run/multiplayer').get().asFile
+        File coordination = multiplayerCoordination, consoles = new File(root, 'consoles')
+        File serverDir = new File(root, 'server'), alphaDir = new File(root, 'alpha'), betaDir = new File(root, 'beta')
+        project.delete(root)
+        [coordination, consoles, serverDir, alphaDir, betaDir].each { it.mkdirs() }
+        [serverDir, alphaDir, betaDir].each { new File(it, 'eula.txt').text = 'eula=true\n' }
+        def write = { String name, String value ->
+            File temporary = new File(coordination, name + '.harness.tmp')
+            temporary.text = value
+            java.nio.file.Files.move(temporary.toPath(), new File(coordination, name).toPath(),
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+        def configureServer = { ->
+            int port
+            new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress()).withCloseable { port = it.localPort }
+            // A fresh port per boot avoids depending on listen-socket reuse after the previous process exits.
+            new File(serverDir, 'server.properties').text = "server-ip=localhost\nserver-port=${port}\nonline-mode=false\n" +
+                "level-name=multiplayer-world\nview-distance=2\nsimulation-distance=2\nspawn-protection=0\nsync-chunk-writes=false\nmax-players=4\n"
+            write('port', port.toString())
+        }
+        def commandLine = { String taskName ->
+            def task = tasks.named(taskName).get()
+            List<String> line = [task.javaLauncher.get().executablePath.asFile.absolutePath]
+            line.addAll(task.allJvmArgs.collect { it.toString() })
+            line.add(task.mainClass.get())
+            line.addAll(task.args.collect { it.toString() })
+            task.argumentProviders.each { provider -> provider.asArguments().each { line.add(it.toString()) } }
+            line
+        }
+        def launch = { String taskName, File directory, String label ->
+            List<String> line = commandLine(taskName)
+            if (label != 'server' && System.getenv('DISPLAY') == null && new File('/usr/bin/xvfb-run').exists())
+                line = ['xvfb-run', '--auto-servernum'] + line
+            logger.lifecycle("Multiplayer harness launching {}", label)
+            new ProcessBuilder(line).directory(directory).redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(new File(consoles, label + '.log'))).start()
+        }
+        def waitUntil = { String what, long seconds, Closure<Boolean> condition, List<Process> required ->
+            long deadline = System.nanoTime() + seconds * 1_000_000_000L
+            while (!condition.call()) {
+                required.each { if (!it.alive) throw new GradleException("Multiplayer harness process exited while waiting for ${what}") }
+                if (System.nanoTime() - deadline > 0) throw new GradleException("Multiplayer harness timed out waiting for ${what}")
+                Thread.sleep(200)
+            }
+        }
+        def ready = { int boot -> def file = new File(coordination, 'server-ready'); file.exists() && file.text.trim() == boot.toString() }
+        def retainClassLoad = { int boot ->
+            File log = new File(serverDir, 'class-load.log')
+            if (log.exists()) java.nio.file.Files.move(log.toPath(), new File(serverDir, "class-load-${boot}.log").toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+        Map<String, Process> processes = [:]
+        int boot = 1
+        try {
+            configureServer(); write('boot', '1')
+            processes.server = launch('runMultiplayerServer', serverDir, 'server')
+            waitUntil('server boot 1', 300, { ready(1) }, [processes.server])
+            processes.alpha = launch('runMultiplayerAlpha', alphaDir, 'alpha')
+            processes.beta = launch('runMultiplayerBeta', betaDir, 'beta')
+            long deadline = System.nanoTime() + 1800L * 1_000_000_000L
+            while (processes.alpha.alive || processes.beta.alive) {
+                File restart = new File(coordination, 'restart')
+                if (restart.exists()) {
+                    restart.delete()
+                    write('stop', 'restart')
+                    waitUntil("server ${boot} stop for restart", 180, { !processes.server.alive }, [])
+                    retainClassLoad(boot)
+                    boot++
+                    configureServer(); write('boot', boot.toString())
+                    processes.server = launch('runMultiplayerServer', serverDir, 'server')
+                    int expected = boot
+                    waitUntil("server boot ${boot}", 300, { ready(expected) }, [processes.server])
+                } else if (!processes.server.alive) {
+                    throw new GradleException('Dedicated server exited while multiplayer clients were running')
+                }
+                if (System.nanoTime() - deadline > 0) throw new GradleException('Multiplayer clients did not finish in time')
+                Thread.sleep(200)
+            }
+            write('stop', 'finished')
+            waitUntil('final server stop', 180, { !processes.server.alive }, [])
+            retainClassLoad(boot)
+
+            ['alpha', 'beta'].each { role ->
+                String log = new File(consoles, role + '.log').text
+                if (!log.contains("Multiplayer ${role} all assertions PASS") || log.contains('Client gametests failed with an exception'))
+                    throw new GradleException("Multiplayer ${role} client did not pass every assertion")
+            }
+            String serverLog = new File(consoles, 'server.log').text
+            ['Multiplayer dedicated server isolation PASS boot=1', 'Multiplayer dedicated server isolation PASS boot=2',
+             'Multiplayer authority ready boot=1', 'Multiplayer authority ready boot=2'].each { marker ->
+                if (!serverLog.contains(marker)) throw new GradleException("Dedicated server did not reach checkpoint: ${marker}")
+            }
+            if (boot != 2) throw new GradleException("Expected exactly one server restart, observed ${boot - 1}")
+            (1..boot).each { n ->
+                File classes = new File(serverDir, "class-load-${n}.log")
+                if (!classes.exists()) throw new GradleException("Missing dedicated-server class-load evidence for boot ${n}")
+                String loaded = classes.text
+                for (String forbidden : ['fi.dy.masa.', 'net.minecraft.client.', 'dev.mcmateriallist.fabric.client.']) {
+                    if (loaded.contains(forbidden)) throw new GradleException("Dedicated server boot ${n} loaded a forbidden client class: ${forbidden}")
+                }
+            }
+            logger.lifecycle('Multiplayer two-client dedicated-server verification PASS')
+        } catch (Throwable failure) {
+            ['server', 'alpha', 'beta'].each { label ->
+                File console = new File(consoles, label + '.log')
+                if (console.exists()) {
+                    def lines = console.readLines()
+                    logger.error("----- ${label} console (last 120 lines) -----\n" + lines.subList(Math.max(0, lines.size() - 120), lines.size()).join('\n'))
+                }
+            }
+            throw failure
+        } finally {
+            processes.values().each { process ->
+                if (process.alive) { process.destroy(); if (!process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)) process.destroyForcibly() }
+            }
         }
     }
 }
