@@ -164,7 +164,8 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
         check(denied.status() == DENIED && denied.snapshot() == null, "Non-participant read another project: " + denied.status());
         var forged = new SharedCommand(isolated, M0, UUID.randomUUID(), 0, 0, new SharedCommand.SetDone(true));
         context.runOnClient(client -> sendRaw(new SharedMessage.TaskCommand(forged)));
-        // The authority answers an out-of-scope command with a content-free diagnostic that clears this transport.
+        // The refused join leaves no readable subscription; the authority refuses the forged command and withholds
+        // its content-free answer. Alpha's final check proves the other project stayed untouched.
         settleInvalidation(); settleInvalidation();
         var joined = join(scope);
         check(joined.role(actor) == ProjectRole.MEMBER, "Beta did not join as Member: " + joined.role(actor));
@@ -190,8 +191,9 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
         until("own note delta despite dropped ACK", client -> { var row = row(M1); return row != null && "beta note 2".equals(row.note()); });
         until("note ACK dropped", client -> MultiplayerFaults.dropped(note.operationId()));
         long noted = cursor();
-        mark("beta-offline", "");
         disconnect();
+        // Only after the socket is closed, so alpha's edit cannot reach beta live.
+        mark("beta-offline", "");
         long offlineRevision = Long.parseLong(awaitFile("alpha-offline-edit"));
         connect(1);
         var resynced = join(scope);

@@ -395,6 +395,12 @@ tasks.register('verifyMultiplayer') {
             processes.beta = launch('runMultiplayerBeta', betaDir, 'beta')
             long deadline = System.nanoTime() + 1800L * 1_000_000_000L
             while (processes.alpha.alive || processes.beta.alive) {
+                // A client that dies before reporting its own failure must not leave its peer waiting.
+                ['alpha', 'beta'].each { role ->
+                    if (!processes[role].alive && !new File(coordination, role + '-finished').exists()
+                            && !new File(coordination, 'failed-' + role).exists())
+                        write('failed-' + role, "process exited with ${processes[role].exitValue()}")
+                }
                 File restart = new File(coordination, 'restart')
                 if (restart.exists()) {
                     restart.delete()
@@ -417,6 +423,7 @@ tasks.register('verifyMultiplayer') {
             retainClassLoad(boot)
 
             ['alpha', 'beta'].each { role ->
+                if (processes[role].exitValue() != 0) throw new GradleException("Multiplayer ${role} client exited with ${processes[role].exitValue()}")
                 String log = new File(consoles, role + '.log').text
                 if (!log.contains("Multiplayer ${role} all assertions PASS") || log.contains('Client gametests failed with an exception'))
                     throw new GradleException("Multiplayer ${role} client did not pass every assertion")

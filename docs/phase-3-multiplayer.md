@@ -34,7 +34,7 @@ Every assertion reads one of two things: the socket-delivered state of the clien
 
 | Step | Asserted on the real processes | Acceptance criteria |
 | --- | --- | --- |
-| Join | Beta discovers only the project it belongs to. Its join and forged raw command against alpha's other project are refused, and that project stays at revision 0 with empty rows. | AC-14, AC-17 |
+| Join | Beta discovers only the project it belongs to. Its join to alpha's other project is DENIED. A forged raw command against that project is refused by the authority, which withholds its content-free answer, and the project stays at revision 0 with empty rows. | AC-14, AC-17 |
 | Synchronization | Alpha's completion reaches beta with the assignee, completion actor and revision. Beta's claim and note reach alpha. | AC-17 |
 | Simultaneous claim | Both clients send a claim with expected version 0 at a shared barrier. Exactly one is OK. The other is DENIED (Member) or CONFLICT (Administrator). Both clients converge on the same assignee at row version 1. | AC-11 |
 | Lost response, same connection | The delta arrives but the ACK is dropped. After a fresh snapshot, the exact replay returns the original outcome and revision, and no new revision appears. A stale command conflicts against the latest row without changing it. | AC-12, AC-13 |
