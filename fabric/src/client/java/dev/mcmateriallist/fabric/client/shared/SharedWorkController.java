@@ -50,6 +50,8 @@ public final class SharedWorkController {
     private final ThreadPoolExecutor digests = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
         new ArrayBlockingQueue<>(4), task -> { Thread thread = new Thread(task, "mcmateriallist-shared-source-read"); thread.setDaemon(false); return thread; });
     private final Map<UUID, Replayed> replays = new LinkedHashMap<>();
+    /** Connection and installation for which each binding's source proof was last validated. */
+    private final Map<UUID, Replayed> proofs = new HashMap<>();
     /** Scope the latest connection was synchronized to; reconnect restores it once, before any new selection. */
     private ProjectScope subscribed;
     private UUID subscribedActor;
@@ -455,19 +457,34 @@ public final class SharedWorkController {
      * settles it; the journal is never cancelled, remapped or answered locally.
      */
     private void replay(Entry entry, SharedClientState state, UUID actor) {
-        if (actor == null || entry.archive == null || !state.synchronizedState() || state.snapshot() == null) return;
+        if (actor == null || entry.archive == null || entry.busy != 0 || !state.synchronizedState() || state.snapshot() == null) return;
+        var snapshot = state.snapshot();
         var due = new Replayed(Minecraft.getInstance().getConnection(), state.installations());
+        proofs.keySet().retainAll(verified.keySet());
+        boolean proven = false;
         for (var kind : DatasetKind.values()) {
             var ref = reference(entry, kind); var proof = ref == null ? null : verified.get(ref.bindingId());
+            // The proof must come from this installation's own join validation, never from an earlier connection.
             if (ref == null || proof == null || !ref.actor().equals(actor) || !ref.scope().equals(state.scope())
-                || entry.hidden.contains(ref.scope()) || !proof.source().matches(state.snapshot().manifest().definition(), proof.digest())) continue;
-            for (var operation : SharedClientService.unknown(entry.archive, actor, ref.scope())) {
-                UUID id = operation.command().operationId();
-                if (operation.kind() != kind || entry.confirming.contains(id) || due.equals(replays.get(id))) continue;
-                if (!SharedClientNetworking.replay(operation.command(), actor)) continue;
-                if (replays.size() >= REPLAYS && !replays.containsKey(id)) replays.remove(replays.keySet().iterator().next());
-                replays.put(id, due);
+                || entry.hidden.contains(ref.scope()) || !due.equals(proofs.get(ref.bindingId()))
+                || !proof.source().matches(snapshot.manifest().definition(), proof.digest())) continue;
+            var held = entry.backends.get(kind); var backend = held == null ? null : held.get();
+            if (backend != null) {
+                var current = backend.capture(false);
+                if (!current.ok() || !proof.source().equals(current.source())) continue;
             }
+            proven = true;
+        }
+        // A replay answer of DENIED cannot distinguish "not executed" from "retained outcome withheld after a role
+        // change", so only replay what the current role could still submit.
+        if (!proven || !snapshot.canWrite(actor)) return;
+        for (var operation : SharedClientService.unknown(entry.archive, actor, state.scope())) {
+            UUID id = operation.command().operationId(); var intent = operation.command().intent();
+            if ((intent instanceof SharedCommand.Assign || intent instanceof SharedCommand.ClearAssignment) && !snapshot.canAdminister(actor)) continue;
+            if (entry.confirming.contains(id) || due.equals(replays.get(id))) continue;
+            if (!SharedClientNetworking.replay(operation.command(), actor)) continue;
+            if (replays.size() >= REPLAYS && !replays.containsKey(id)) replays.remove(replays.keySet().iterator().next());
+            replays.put(id, due);
         }
     }
     /**
@@ -491,7 +508,7 @@ public final class SharedWorkController {
             restored = listener;
             prepare(backend, false, (capture, digest) -> {
                 if (listener != Minecraft.getInstance().getConnection() || closed || !Objects.equals(ref, reference(entry, kind))
-                    || SharedClientNetworking.state().status() != SharedClientState.Status.AVAILABLE) return;
+                    || SharedClientNetworking.state().status() != SharedClientState.Status.AVAILABLE) { setReason(entry, null); return; }
                 try {
                     UUID request = SharedClientNetworking.join(ref.scope());
                     requests.put(request, new Request(backend, actor, listener, ref, capture, digest, false, System.nanoTime()));
@@ -508,7 +525,8 @@ public final class SharedWorkController {
             || !ref.scope().equals(state.scope()) || !source.matches(state.snapshot().manifest().definition(), digest)) {
             hide(entry, ref.scope()); setReason(entry, "join_required"); return;
         }
-        verified.put(ref.bindingId(), new Verified(source, digest)); entry.hidden.remove(ref.scope()); entry.reason = null; entry.version++;
+        verified.put(ref.bindingId(), new Verified(source, digest)); proofs.put(ref.bindingId(), new Replayed(listener, state.installations()));
+        entry.hidden.remove(ref.scope()); entry.reason = null; entry.version++;
     }
     private void hide(Entry entry, ProjectScope scope) {
         if (entry.archive == null) return;
@@ -546,5 +564,5 @@ public final class SharedWorkController {
     }
     static void setReason(Entry entry, String reason) { if (entry != null) { entry.reason = reason; entry.version++; } }
     private void later(Runnable callback) { Minecraft.getInstance().schedule(() -> { if (!closed) callback.run(); }); }
-    public void shutdown() { closed = true; requests.clear(); admins.clear(); verified.clear(); replays.clear(); digests.shutdown(); service.shutdown(); }
+    public void shutdown() { closed = true; requests.clear(); admins.clear(); verified.clear(); replays.clear(); proofs.clear(); digests.shutdown(); service.shutdown(); }
 }

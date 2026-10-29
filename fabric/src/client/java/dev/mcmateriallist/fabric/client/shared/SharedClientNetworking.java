@@ -321,6 +321,10 @@ public final class SharedClientNetworking {
             SharedCommand original = pending.command();
             if (!original.scope().equals(result.result().scope())
                 || (result.result().row() != null && !original.taskId().equals(result.result().row().taskId()))) return;
+            if (pending.replay() && !dev.mcmateriallist.core.shared.client.SharedClientService.definitive(result.result().status())) {
+                // Possibly the original's own answer overtaken by a same-connection replay: keep awaiting a definitive one.
+                state.receive(message); return;
+            }
             unresolved.remove(original.operationId());
             retain(results, original.operationId(), new Confirmed(result.result(), pending.context(), pending.replay())); state.receive(message);
         } else {
