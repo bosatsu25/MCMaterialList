@@ -70,6 +70,21 @@ tasks.register('verifyClientRestart') {
     description = 'Test both GUIs, then restore the same placement in a fresh Minecraft process.'
     dependsOn 'runClientGameTest', 'runClientGameTestRestore'
 }
+// Issue #9: the Location File gametest runs inside both processes above; its fresh-process half must have passed now.
+tasks.named('runClientGameTestRestore') { doFirst { ext.restoreStartedMillis = System.currentTimeMillis() } }
+tasks.register('verifyLocationFiles') {
+    group = 'verification'
+    description = 'Require Phase 4A Location File UI/registration in the first client and its persistence in the fresh restore client.'
+    dependsOn 'verifyClientRestart'
+    doLast {
+        def log = layout.buildDirectory.file('run/clientGameTest/logs/latest.log').get().asFile
+        def started = tasks.named('runClientGameTestRestore').get().ext.restoreStartedMillis
+        if (!log.exists() || log.lastModified() < started || !log.text.contains('Phase 4A Location File restore PASS')
+            || log.text.contains('Client gametests failed with an exception')) {
+            throw new GradleException('Phase 4A Location File restore did not pass in the current fresh process; inspect the client gametest log.')
+        }
+    }
+}
 
 sourceSets {
     serverSmoke {
