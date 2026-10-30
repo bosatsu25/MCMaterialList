@@ -148,13 +148,14 @@ public final class MaterialWorkSession {
         locations.ensure();
         String location = locations.label();
         int footer = screen.getScreenHeight() - 22, lower = screen.getScreenHeight() - 58;
-        int[] slot = slot(toolbarWidth(location), compact ? new int[][]{{filterY, 0}, {footer, 0}, {lower, refreshX + refreshButton.getWidth() + 2}}
+        // Compact layout reserves only 8px under the list, so the row above the footer overlaps it: use the title row first.
+        int[] slot = slot(toolbarWidth(location), compact ? new int[][]{{filterY, 0}, {footer, 0}, {2, screen.getScreenWidth() / 2}, {lower, refreshX + refreshButton.getWidth() + 2}}
             : new int[][]{{filterY, 0}, {lower, 0}, {footer, 0}});
         addToolbar(slot[0], slot[1], slot[2], location, (button, mouse) ->
             GuiBase.openGui(new dev.mcmateriallist.fabric.client.location.LocationFileScreen(screen, locations, shared)));
         // Issue #10: Check Materials follows the Location File control in the same rows; the title row's right half is the
         // last resort so a narrow screen never clamps it outside the GUI.
-        int[][] stockRows = compact ? new int[][]{{filterY, 0}, {footer, 0}, {lower, refreshX + refreshButton.getWidth() + 2}, {2, screen.getScreenWidth() / 2}}
+        int[][] stockRows = compact ? new int[][]{{filterY, 0}, {footer, 0}, {2, screen.getScreenWidth() / 2}, {lower, refreshX + refreshButton.getWidth() + 2}}
             : new int[][]{{filterY, 0}, {lower, 0}, {footer, 0}, {2, screen.getScreenWidth() / 2}};
         String check = stock.label();
         int[] checkSlot = slot(toolbarWidth(check), stockRows);
