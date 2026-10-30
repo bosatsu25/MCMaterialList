@@ -11,6 +11,8 @@ import fi.dy.masa.malilib.render.GuiContext;
 /** Create/rename input. The name is a stored value only; files are always named by profile UUID. */
 public final class LocationNameScreen extends LocationScreen {
     private LocationProfile original;
+    /** A profile this screen already created whose selection failed; a retry only selects it, never creates another. */
+    private LocationProfile created;
     private final Runnable changed;
     private GuiTextFieldMultiLine input;
     private String draft;
@@ -35,21 +37,23 @@ public final class LocationNameScreen extends LocationScreen {
         if (!(LocationWorld.resolve() instanceof LocationWorld.Available context)) { report("reject.unavailable"); return; }
         var service = MCMaterialListClient.locations();
         if (original == null) {
-            await(context, service.create(context.world(), context.dimension(), name), created -> {
-                if (created.outcome() != LocationOutcome.CHANGED) { report(created); return; }
+            if (created != null) {
+                if (!created.world().equals(context.world())) { report("reject.other_world"); return; }
+                if (name.equals(created.displayName())) { select(context, created); return; }
+                // The name was edited after the profile was saved: rename that profile, then retry its selection.
+                await(context, service.rename(context.world(), created.id(), created.generation(), name), renamed -> {
+                    if (renamed.outcome() != LocationOutcome.CHANGED) { report(renamed); return; }
+                    created = renamed.storage().value(); session.reload(); changed.run();
+                    if (mc.gui.screen() == this) select(context, created);
+                });
+                return;
+            }
+            await(context, service.create(context.world(), context.dimension(), name), result -> {
+                if (result.outcome() != LocationOutcome.CHANGED) { report(result); return; }
+                created = result.storage().value();
                 session.reload(); changed.run();
                 // The new profile becomes current only if the player is still here; a choice made meanwhile is kept.
-                if (mc.gui.screen() != this) return;
-                await(context, service.select(context.world(), created.storage().value().id()), selected -> {
-                    session.reload(); changed.run();
-                    if (selected.outcome() != LocationOutcome.CHANGED && selected.outcome() != LocationOutcome.UNCHANGED) {
-                        // The profile exists but is not current (e.g. an unreadable current-file choice); say so instead of leaving.
-                        if (selected.outcome() != null) report("outcome." + selected.outcome().name());
-                        else report("storage", selected.selection().status().name());
-                        return;
-                    }
-                    if (mc.gui.screen() == this) back();
-                });
+                if (mc.gui.screen() == this) select(context, created);
             });
             return;
         }
@@ -66,6 +70,18 @@ public final class LocationNameScreen extends LocationScreen {
                 return;
             }
             session.reload(); changed.run();
+            if (mc.gui.screen() == this) back();
+        });
+    }
+    private void select(LocationWorld.Available context, LocationProfile profile) {
+        await(context, MCMaterialListClient.locations().select(context.world(), profile.id()), selected -> {
+            session.reload(); changed.run();
+            if (selected.outcome() != LocationOutcome.CHANGED && selected.outcome() != LocationOutcome.UNCHANGED) {
+                // The profile exists but is not current (e.g. an unreadable current-file choice); say so instead of leaving.
+                if (selected.outcome() != null) report("outcome." + selected.outcome().name());
+                else report("storage", selected.selection().status().name());
+                return;
+            }
             if (mc.gui.screen() == this) back();
         });
     }
