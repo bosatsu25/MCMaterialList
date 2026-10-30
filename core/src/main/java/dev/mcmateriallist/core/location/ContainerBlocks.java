@@ -7,12 +7,12 @@ import java.util.Set;
 
 /**
  * Phase 4A registrable container allowlist, by block registry id. Everything else (ender chests included) is refused.
- * Hoppers, droppers and dispensers may hold items only in transit; a later check must report them as such.
+ * Hoppers, droppers and dispensers may hold items only in transit, so Check Materials reports them as MACHINE.
  */
 public final class ContainerBlocks {
     private static final List<String> COLOURS = List.of("white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
         "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black");
-    private static final Set<String> SUPPORTED;
+    private static final Set<String> SUPPORTED, MACHINES = Set.of("minecraft:hopper", "minecraft:dropper", "minecraft:dispenser");
     static {
         Set<String> ids = new HashSet<>(List.of("minecraft:chest", "minecraft:trapped_chest", "minecraft:barrel", "minecraft:shulker_box",
             "minecraft:hopper", "minecraft:dropper", "minecraft:dispenser"));
@@ -22,6 +22,10 @@ public final class ContainerBlocks {
     private ContainerBlocks() {}
 
     public static boolean supported(String blockId) { return blockId != null && SUPPORTED.contains(blockId); }
+    /** Derived from the registered id only, so it never reveals the live block. Any id other than the three machines is STORAGE. */
+    public static ContainerKind kind(String blockId) {
+        return MACHINES.contains(Objects.requireNonNull(blockId, "blockId")) ? ContainerKind.MACHINE : ContainerKind.STORAGE;
+    }
     /** A double chest is stored once, at the lexicographically smaller x, y, z of its two halves. */
     public static ContainerPosition canonical(ContainerPosition first, ContainerPosition second) {
         Objects.requireNonNull(first); Objects.requireNonNull(second);

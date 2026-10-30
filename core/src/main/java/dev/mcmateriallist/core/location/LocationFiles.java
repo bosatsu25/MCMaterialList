@@ -10,14 +10,14 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 
-/** Same path guard and replacement contract as the Phase 1 store, kept separate so that store is untouched. */
-final class LocationFiles {
+/** Same path guard and replacement contract as the Phase 1 store, kept separate so that store is untouched. Also used by the stock grant store. */
+public final class LocationFiles {
     private LocationFiles() {}
 
-    @FunctionalInterface interface Validator { void check(byte[] bytes); }
-    @FunctionalInterface interface Step { void run() throws IOException; }
+    @FunctionalInterface public interface Validator { void check(byte[] bytes); }
+    @FunctionalInterface public interface Step { void run() throws IOException; }
 
-    static byte[] read(Path file, int limit) throws IOException {
+    public static byte[] read(Path file, int limit) throws IOException {
         // readNBytes also bounds a file which grows after the size check.
         try (var input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
             byte[] bytes = input.readNBytes(limit + 1);
@@ -25,7 +25,7 @@ final class LocationFiles {
             return bytes;
         }
     }
-    static void replace(Path target, byte[] bytes, int limit, Validator validator, Step beforeMove) throws IOException {
+    public static void replace(Path target, byte[] bytes, int limit, Validator validator, Step beforeMove) throws IOException {
         guard(target, false);
         Path temporary = Files.createTempFile(target.getParent(), target.getFileName() + ".", ".tmp");
         try {
@@ -36,7 +36,7 @@ final class LocationFiles {
             Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } finally { Files.deleteIfExists(temporary); }
     }
-    static void ensureDirectories(Path directory) throws IOException {
+    public static void ensureDirectories(Path directory) throws IOException {
         guard(directory, true); Path cursor = directory.getRoot();
         for (Path part : directory) {
             cursor = cursor.resolve(part);
@@ -44,7 +44,7 @@ final class LocationFiles {
             guard(cursor, true);
         }
     }
-    static void guard(Path path, boolean directory) throws IOException {
+    public static void guard(Path path, boolean directory) throws IOException {
         Path normalized = path.toAbsolutePath().normalize(); Path cursor = normalized.getRoot();
         for (Path part : normalized) {
             cursor = cursor.resolve(part);
@@ -55,7 +55,7 @@ final class LocationFiles {
                 || ((!last || directory) && !attrs.isDirectory()) || (last && !directory && !attrs.isRegularFile())) throw new UnsafePathException();
         }
     }
-    static final class UnsafePathException extends IOException {
+    public static final class UnsafePathException extends IOException {
         private static final long serialVersionUID = 1L;
         UnsafePathException() { super("Unsafe location file path"); }
     }
