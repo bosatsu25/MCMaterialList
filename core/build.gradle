@@ -3,3 +3,5 @@ dependencies {
     implementation 'com.google.code.gson:gson:2.14.0'
     compileOnly 'com.google.errorprone:error_prone_annotations:2.48.0'
 }
+// The nested core JAR carries the project license too.
+jar { from(rootProject.file('LICENSE')) }

@@ -30,6 +30,11 @@ processResources {
     inputs.property 'version', project.version
     filesMatching('fabric.mod.json') { expand version: project.version }
 }
+// Issue #23: the project license and third-party notices ship inside the application JAR.
+jar {
+    from(rootProject.file('LICENSE'))
+    from(rootProject.file('THIRD_PARTY_NOTICES.md'))
+}
 
 fabricApi {
     configureTests {
@@ -198,14 +203,62 @@ tasks.register('verifySharedTransport') {
     group = 'verification'
     dependsOn 'runSharedTransportTest', 'verifyIsolation', 'verifyApplicationJar'
 }
+// Issue #23: the license of every pinned runtime dependency, read from that exact artifact's own fabric.mod.json,
+// must match THIRD_PARTY_NOTICES.md. Nothing is inferred from names or memory.
+tasks.register('verifyDependencyLicenses') {
+    group = 'verification'
+    def notices = rootProject.file('THIRD_PARTY_NOTICES.md')
+    inputs.file notices
+    doLast {
+        def expected = [
+            [notation: "net.fabricmc:fabric-loader:${rootProject.loader_version}", id: 'fabricloader', version: rootProject.loader_version, license: 'Apache-2.0'],
+            [notation: "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_api_version}", id: 'fabric-api', version: rootProject.fabric_api_version, license: 'Apache-2.0'],
+            [notation: 'maven.modrinth:litematica:Yxyi6tlv', id: 'litematica', version: rootProject.litematica_version, license: 'LGPLv3'],
+            [notation: 'maven.modrinth:malilib:52cWF5Da', id: 'malilib', version: rootProject.malilib_version, license: 'LGPLv3']
+        ]
+        def text = notices.text
+        def problems = []
+        expected.each { dependency ->
+            def configuration = project.configurations.detachedConfiguration(project.dependencies.create(dependency.notation.toString()))
+            configuration.transitive = false
+            def metadata = new groovy.json.JsonSlurper().parse(zipTree(configuration.singleFile).matching { include 'fabric.mod.json' }.singleFile)
+            def license = [metadata.license].flatten().join(' AND ')
+            logger.lifecycle("Dependency license ${dependency.notation}: id=${metadata.id} version=${metadata.version} license=${license}")
+            if (metadata.id != dependency.id || metadata.version != dependency.version.toString() || license != dependency.license) {
+                problems << "${dependency.notation} declares id=${metadata.id} version=${metadata.version} license=${license}"
+            }
+            def row = "| `${dependency.id}` | ${dependency.version} | ${dependency.license} |"
+            if (!text.contains(row)) problems << "THIRD_PARTY_NOTICES.md lacks the row ${row}"
+        }
+        if (!problems.isEmpty()) throw new GradleException('Third-party notices disagree with the pinned artifacts:\n' + problems.join('\n'))
+    }
+}
 tasks.register('verifyApplicationJar') {
     group = 'verification'
-    dependsOn 'jar'
+    dependsOn 'jar', 'verifyDependencyLicenses'
     doLast {
+        def found = [license: false, notices: false, nested: 0]
         zipTree(tasks.jar.archiveFile.get().asFile).visit { entry ->
-            if (entry.relativePath.pathString == 'fabric.mod.json') {
+            def path = entry.relativePath.pathString
+            if (path == 'LICENSE') found.license = entry.file.text.startsWith('MIT License')
+            if (path == 'THIRD_PARTY_NOTICES.md') found.notices = true
+            if (path.startsWith('META-INF/jars/') && path.endsWith('.jar')) {
+                // Only this project's own core may be nested; it must carry the project license.
+                found.nested++
+                def nestedLicense = false
+                zipTree(entry.file).visit { inner ->
+                    def innerPath = inner.relativePath.pathString
+                    if (innerPath == 'LICENSE') nestedLicense = inner.file.text.startsWith('MIT License')
+                    if (innerPath.endsWith('.class') && !innerPath.startsWith('dev/mcmateriallist/core/')) {
+                        throw new GradleException("Application JAR nests third-party code: ${path} contains ${innerPath}")
+                    }
+                }
+                if (!nestedLicense) throw new GradleException("Nested ${path} lacks the MIT LICENSE.")
+            }
+            if (path.startsWith('com/google/gson/')) throw new GradleException('Application JAR bundles Gson.')
+            if (path == 'fabric.mod.json') {
                 def metadata = new groovy.json.JsonSlurper().parse(entry.file)
-                if (metadata.id != 'mcmateriallist' || metadata.version != project.version.toString()) {
+                if (metadata.id != 'mcmateriallist' || metadata.version != project.version.toString() || metadata.license != 'MIT') {
                     throw new GradleException('Application JAR contains unexpected mod metadata.')
                 }
             }
@@ -221,6 +274,9 @@ tasks.register('verifyApplicationJar') {
                 || entry.relativePath.pathString.startsWith('fi/dy/masa/')) {
                 throw new GradleException('Application JAR contains test-only or optional-mod implementation classes.')
             }
+        }
+        if (!found.license || !found.notices || found.nested != 1) {
+            throw new GradleException("Application JAR license contents are wrong: ${found}")
         }
     }
 }

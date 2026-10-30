@@ -1,6 +1,6 @@
 # MCMaterialList
 
-Material gathering and region building work state integrated with Litematica. Phase 3 integration adds explicit server projects, Viewer/Member/Administrator role management, and shared work on the existing material and region screens while preserving durable local work. Issue #7 adds reconnect restoration and lost-outcome resolution by exact replay; external two-client acceptance remains pending.
+Material gathering and region building work state integrated with Litematica. Phase 3 integration adds explicit server projects, Viewer/Member/Administrator role management, and shared work on the existing material and region screens while preserving durable local work. Issue #7 adds reconnect restoration and lost-outcome resolution by exact replay. Issue #8 verifies two real clients against a restarted dedicated server, on one machine with offline synthetic accounts ([details](docs/phase-3-multiplayer.md)); acceptance with authenticated players on the target server remains pending.
 
 Pinned baseline: Minecraft **26.2**, Fabric Loader **0.19.3**, Fabric API **0.154.0+26.2**, Litematica **0.28.3**, MaLiLib **0.29.2**, JDK **25**, Gradle **9.7.1**, Loom **1.17.20**.
 
@@ -57,3 +57,9 @@ Test worlds, synthetic fixtures, screenshots and traces remain under ignored bui
 Independent shared bindings, confirmed caches and the original command journal use one schema-2 envelope under `config/mcmateriallist/shared-client/placement-<placement-uuid>.json`. Schema-1 files migrate on the next successful write without changing identities or journal contents. Its previous-good backup omits derived shared snapshots and retains binding/journal metadata; it is not a backup of the server project. Shared authority remains in the server-owned world store. See the [server protocol](docs/SHARED_PROTOCOL.md) and [transport contract](docs/SHARED_TRANSPORT.md).
 
 See the [authoritative v0.1 design](litematica-collaboration-design-v0.1.md), [Phase 2A/2B/2C UI and verification](docs/phase-2-litematica-ui.md), [Phase 1 storage contract](docs/phase-1-local-work-state.md), and [Phase 0 evidence](docs/phase-0-compatibility-spike.md).
+
+## License
+
+MCMaterialList is released under the [MIT License](LICENSE). The repository owner chose it on 2026-10-30 ([decision record](docs/license-decision.md)). The license covers only this project's own code and resources; it does not relicense the dependencies below.
+
+The distributed JAR bundles no third-party code. At runtime the mod requires Minecraft (Mojang EULA), Fabric Loader and Fabric API (Apache-2.0). On the client it optionally integrates with Litematica and MaLiLib, which declare LGPLv3. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists each pinned version and its declared license. The build checks that list against the pinned artifacts.

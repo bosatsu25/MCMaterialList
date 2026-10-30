@@ -4,6 +4,8 @@
   "version": "${version}",
   "name": "MCMaterialList",
   "description": "Local material and region work state integrated with Litematica",
+  "license": "MIT",
+  "contact": {"sources": "https://github.com/bosatsu25/MCMaterialList"},
   "environment": "*",
   "entrypoints": {
     "main": ["dev.mcmateriallist.fabric.MCMaterialList"],
