@@ -298,6 +298,7 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
         var current = snapshot();
         check(current.scope().equals(scope), "Membership change requires the selected scope");
         UUID request = context.computeOnClient(client -> SharedClientNetworking.setMembership(scope, current.projectRevision(), target, role));
+        LOG.info("Multiplayer {} membership request={} revision={} role={} {}", this.role, request, current.projectRevision(), role, diagnostics());
         var reply = reply(request);
         check(reply.status() == OK && Objects.equals(reply.snapshot().role(target), role), "Membership change failed: " + reply.status());
         settleInvalidation();
@@ -408,7 +409,7 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
     private String diagnostics() {
         return context.computeOnClient(client -> {
             var state = SharedClientNetworking.state();
-            return "status=" + state.status() + " scope=" + state.scope() + " cursor=" + state.cursor()
+            return "status=" + state.status() + " control=" + SharedClientNetworking.diagnostic() + " scope=" + state.scope() + " cursor=" + state.cursor()
                 + " connected=" + (client.level != null) + " screen=" + (client.gui.screen() == null ? null : client.gui.screen().getClass().getSimpleName());
         });
     }
