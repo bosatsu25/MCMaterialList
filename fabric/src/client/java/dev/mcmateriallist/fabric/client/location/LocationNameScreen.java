@@ -7,6 +7,7 @@ import dev.mcmateriallist.fabric.client.MCMaterialListClient;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.GuiTextFieldMultiLine;
 import fi.dy.masa.malilib.render.GuiContext;
+import java.util.function.Consumer;
 
 /** Create/rename input. The name is a stored value only; files are always named by profile UUID. */
 public final class LocationNameScreen extends LocationScreen {
@@ -41,11 +42,7 @@ public final class LocationNameScreen extends LocationScreen {
                 if (!created.world().equals(context.world())) { report("reject.other_world"); return; }
                 if (name.equals(created.displayName())) { select(context, created); return; }
                 // The name was edited after the profile was saved: rename that profile, then retry its selection.
-                await(context, service.rename(context.world(), created.id(), created.generation(), name), renamed -> {
-                    if (renamed.outcome() != LocationOutcome.CHANGED) { report(renamed); return; }
-                    created = renamed.storage().value(); session.reload(); changed.run();
-                    if (mc.gui.screen() == this) select(context, created);
-                });
+                rename(context, created, name, latest -> created = latest, () -> { if (mc.gui.screen() == this) select(context, created); });
                 return;
             }
             await(context, service.create(context.world(), context.dimension(), name), result -> {
@@ -58,19 +55,21 @@ public final class LocationNameScreen extends LocationScreen {
             return;
         }
         if (!context.world().equals(original.world())) { report("reject.other_world"); return; }
-        await(context, service.rename(context.world(), original.id(), original.generation(), name), result -> {
+        rename(context, original, name, latest -> original = latest, () -> { if (mc.gui.screen() == this) back(); });
+    }
+    /** Any rejected rename reloads the profile so the next attempt uses its current generation; the typed draft is kept. */
+    private void rename(LocationWorld.Available context, LocationProfile target, String name, Consumer<LocationProfile> keep, Runnable renamed) {
+        var service = MCMaterialListClient.locations();
+        await(context, service.rename(context.world(), target.id(), target.generation(), name), result -> {
             if (result.outcome() != LocationOutcome.CHANGED) {
                 report(result);
-                // Refresh the expected generation (a stale one would conflict forever); the typed draft is kept.
-                var target = original;
                 await(context, service.load(context.world(), target.id()), latest -> {
-                    if (latest.ok() && latest.value().id().equals(target.id())) original = latest.value();
+                    if (latest.ok() && latest.value().id().equals(target.id())) keep.accept(latest.value());
                     changed.run();
                 });
                 return;
             }
-            session.reload(); changed.run();
-            if (mc.gui.screen() == this) back();
+            keep.accept(result.storage().value()); session.reload(); changed.run(); renamed.run();
         });
     }
     private void select(LocationWorld.Available context, LocationProfile profile) {
