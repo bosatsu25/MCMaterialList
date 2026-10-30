@@ -184,6 +184,9 @@ public final class Phase4StockClientTest implements FabricClientGameTest {
             check(!server.computeOnServer(mc -> mc.overworld().hasChunkAt(far)), "Checking loaded the far chunk");
             check(server.computeOnServer(mc -> mc.overworld().getBlockEntity(loot) instanceof RandomizableContainer container && container.getLootTable() != null),
                 "Checking generated the loot table");
+            // The toolbar is rebuilt on the next frame after the check ends; inspect controls only once it shows the details entry.
+            context.waitFor(mc -> ((GuiBaseTestAccess) screen).phase0Buttons().stream().anyMatch(button -> button.getHoverStrings().contains(StockSession.text("details")))
+                && ((GuiBaseTestAccess) screen).phase0Buttons().stream().anyMatch(button -> button.getHoverStrings().contains(work.stock().label())), 200);
             context.runOnClient(mc -> {
                 String info = work.stock().info(COBBLE);
                 check(info.contains(StockSession.text("info.stock", 100)) && info.contains(StockSession.text("info.machines", 5)), "Show Info stock segment differs: " + info);
@@ -216,6 +219,9 @@ public final class Phase4StockClientTest implements FabricClientGameTest {
             status(second, registered, right, LocationStatus.UNLOADED);
             check(second.confirmed(COBBLE) == 0 && second.coverage().checked() == 0, "An unloaded location was counted");
             check(second.previous(COBBLE).count() == 100 && second.previous(COBBLE).locations() == 3, "Earlier readings were not kept as previous: " + second.previous(COBBLE));
+            // The toolbar is rebuilt on the next frame after the check ends; inspect controls only once it shows the details entry.
+            context.waitFor(mc -> ((GuiBaseTestAccess) screen).phase0Buttons().stream().anyMatch(button -> button.getHoverStrings().contains(StockSession.text("details")))
+                && ((GuiBaseTestAccess) screen).phase0Buttons().stream().anyMatch(button -> button.getHoverStrings().contains(work.stock().label())), 200);
             context.runOnClient(mc -> {
                 String info = work.stock().info(COBBLE);
                 check(info.contains(StockSession.text("info.unchecked")) && info.contains(StockSession.text("info.previous", 100)), "Show Info does not mark previous: " + info);
