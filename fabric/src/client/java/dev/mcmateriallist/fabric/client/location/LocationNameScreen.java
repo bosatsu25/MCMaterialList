@@ -10,7 +10,7 @@ import fi.dy.masa.malilib.render.GuiContext;
 
 /** Create/rename input. The name is a stored value only; files are always named by profile UUID. */
 public final class LocationNameScreen extends LocationScreen {
-    private final LocationProfile original;
+    private LocationProfile original;
     private final Runnable changed;
     private GuiTextFieldMultiLine input;
     private String draft;
@@ -42,6 +42,12 @@ public final class LocationNameScreen extends LocationScreen {
                 if (mc.gui.screen() != this) return;
                 await(context, service.select(context.world(), created.storage().value().id()), selected -> {
                     session.reload(); changed.run();
+                    if (selected.outcome() != LocationOutcome.CHANGED && selected.outcome() != LocationOutcome.UNCHANGED) {
+                        // The profile exists but is not current (e.g. an unreadable current-file choice); say so instead of leaving.
+                        if (selected.outcome() != null) report("outcome." + selected.outcome().name());
+                        else report("storage", selected.selection().status().name());
+                        return;
+                    }
                     if (mc.gui.screen() == this) back();
                 });
             });
@@ -49,7 +55,16 @@ public final class LocationNameScreen extends LocationScreen {
         }
         if (!context.world().equals(original.world())) { report("reject.other_world"); return; }
         await(context, service.rename(context.world(), original.id(), original.generation(), name), result -> {
-            if (result.outcome() != LocationOutcome.CHANGED) { report(result); return; }
+            if (result.outcome() != LocationOutcome.CHANGED) {
+                report(result);
+                // Refresh the expected generation (a stale one would conflict forever); the typed draft is kept.
+                var target = original;
+                await(context, service.load(context.world(), target.id()), latest -> {
+                    if (latest.ok() && latest.value().id().equals(target.id())) original = latest.value();
+                    changed.run();
+                });
+                return;
+            }
             session.reload(); changed.run();
             if (mc.gui.screen() == this) back();
         });
