@@ -18,11 +18,14 @@ public final class BoundedOutgoing {
             this.connection = connection; this.scope = scope; this.bytes = bytes; this.started = started;
         }
     }
+    private static final int REMOVALS = 256;
     private final TransportBudget budget;
     private final int slots;
     private final Deque<Message> queue = new ArrayDeque<>();
     private int preparing;
-    private long generation;
+    private long generation, floor;
+    // Removal generation per connection; the eldest record folds into the global floor, so memory stays bounded.
+    private final LinkedHashMap<UUID, Long> removed = new LinkedHashMap<>();
     public BoundedOutgoing(TransportBudget budget, int slots) {
         this.budget = Objects.requireNonNull(budget);
         if (slots < 1) throw new IllegalArgumentException("Invalid outgoing capacity");
@@ -32,20 +35,23 @@ public final class BoundedOutgoing {
     public boolean offer(UUID connection, ProjectScope scope, byte[] bytes, long now) {
         return offer(connection, scope, bytes, now, generation());
     }
-    /** Captured before serialization; clear/remove invalidates in-progress preparation. */
+    private boolean cancelled(UUID connection, long expectedGeneration) {
+        return expectedGeneration < floor || expectedGeneration < removed.getOrDefault(connection, Long.MIN_VALUE);
+    }
+    /** Captured before serialization; clear, or remove of the same connection, invalidates in-progress preparation. */
     public boolean offer(UUID connection, ProjectScope scope, byte[] bytes, long now, long expectedGeneration) {
         Objects.requireNonNull(connection); Objects.requireNonNull(bytes);
         if (bytes.length < 1 || bytes.length > SharedLimits.MESSAGE_BYTES) throw new IllegalArgumentException("Invalid message size");
         long reservation = 2L * bytes.length;
         synchronized (this) {
-            if (expectedGeneration != generation || queue.size() + preparing >= slots || !budget.reserve(reservation)) return false;
+            if (cancelled(connection, expectedGeneration) || queue.size() + preparing >= slots || !budget.reserve(reservation)) return false;
             preparing++;
         }
         boolean queued = false;
         try {
             byte[] copy = bytes.clone(); // Worker copy never holds the tick/publication monitor.
             synchronized (this) {
-                if (expectedGeneration != generation) return false;
+                if (cancelled(connection, expectedGeneration)) return false;
                 queue.addLast(new Message(connection, scope, copy, now)); queued = true; return true;
             }
         } finally {
@@ -72,14 +78,18 @@ public final class BoundedOutgoing {
         return Set.copyOf(expired);
     }
     public synchronized void remove(UUID connection) {
-        generation++; // Conservatively cancel preparing copies, without retaining rejected tokens.
+        // Cancel only this connection's preparing copies: another connection's cancelled copy surfaces as a false CAPACITY.
+        generation++; removed.remove(connection); removed.put(connection, generation);
+        if (removed.size() > REMOVALS) {
+            var eldest = removed.entrySet().iterator(); floor = Math.max(floor, eldest.next().getValue()); eldest.remove();
+        }
         queue.removeIf(message -> {
             if (!message.connection.equals(connection)) return false;
             budget.release(2L * message.bytes.length); return true;
         });
     }
     public synchronized void clear() {
-        generation++;
+        generation++; floor = generation; removed.clear();
         for (Message message : queue) budget.release(2L * message.bytes.length);
         queue.clear();
     }

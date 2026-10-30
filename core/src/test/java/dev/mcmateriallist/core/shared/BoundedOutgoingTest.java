@@ -33,4 +33,22 @@ class BoundedOutgoingTest {
         assertFalse(queue.offer(token, null, bytes, 0, generation)); assertNull(queue.poll(0));
         assertTrue(queue.offer(token, null, bytes, 0, queue.generation())); queue.clear(); assertEquals(0, budget.used());
     }
+    @Test void removingOneConnectionKeepsAnotherConnectionsPreparation() {
+        var budget = new TransportBudget(20); var queue = new BoundedOutgoing(budget, 2);
+        var kept = UUID.randomUUID(); var removed = UUID.randomUUID();
+        long generation = queue.generation();
+        queue.remove(removed);
+        assertTrue(queue.offer(kept, null, new byte[] { 1 }, 0, generation));
+        assertFalse(queue.offer(removed, null, new byte[] { 2 }, 0, generation));
+        assertEquals(kept, queue.poll(0).connection()); assertNull(queue.poll(0)); assertEquals(0, budget.used());
+    }
+    @Test void boundedRemovalRecordsFailClosedForOldPreparations() {
+        var budget = new TransportBudget(20); var queue = new BoundedOutgoing(budget, 2); var token = UUID.randomUUID();
+        long generation = queue.generation();
+        for (int i = 0; i < 1_000; i++) queue.remove(UUID.randomUUID());
+        // Evicted records raise the floor: an old capture is cancelled conservatively, a fresh one is accepted.
+        assertFalse(queue.offer(token, null, new byte[] { 1 }, 0, generation));
+        assertTrue(queue.offer(token, null, new byte[] { 1 }, 0, queue.generation()));
+        queue.clear(); assertEquals(0, budget.used());
+    }
 }
