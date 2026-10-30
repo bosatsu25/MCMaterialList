@@ -90,6 +90,10 @@ public final class Phase4StockClientTest implements FabricClientGameTest {
             command.accept(arrive);
             context.waitFor(mc -> mc.player.blockPosition().getX() == base.getX(), 200);
             world.getClientLevel().waitForChunksRender();
+            // The client position moves first; fill fails with "That position is not loaded" until the server has both corners.
+            BlockPos low = base.offset(-2, -1, -6), high = base.offset(24, 8, 6);
+            for (int i = 0; i < 1200 && !server.computeOnServer(mc -> mc.overworld().hasChunkAt(low) && mc.overworld().hasChunkAt(high)); i++) context.waitTick();
+            check(server.computeOnServer(mc -> mc.overworld().hasChunkAt(low) && mc.overworld().hasChunkAt(high)), "Fixture chunks never loaded on the server");
             command.accept(fill(base.offset(-2, -1, -6), base.offset(24, -1, 6), "minecraft:stone"));
             command.accept(fill(base.offset(-2, 0, -6), base.offset(24, 8, 6), "minecraft:air"));
             command.accept(arrive);
