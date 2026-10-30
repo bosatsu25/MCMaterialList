@@ -12,15 +12,18 @@ import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
-/** Click-time validation of the block the player is looking at. Only the block identity is read, never its contents. */
-final class LookedAtContainer {
-    sealed interface Capture permits Target, Rejected {}
+/**
+ * Click-time validation of the block the player is looking at. Only the block identity is read, never its contents. Check Materials
+ * also uses it, when a container screen opens, to attribute an observation to a registered position.
+ */
+public final class LookedAtContainer {
+    public sealed interface Capture permits Target, Rejected {}
     /** halves holds both positions of a double chest; position is the single canonical one that is stored. */
-    record Target(ContainerPosition position, List<ContainerPosition> halves) implements Capture {}
-    record Rejected(String key, String detail) implements Capture {}
+    public record Target(ContainerPosition position, List<ContainerPosition> halves) implements Capture {}
+    public record Rejected(String key, String detail) implements Capture {}
     private LookedAtContainer() {}
 
-    static Capture capture() {
+    public static Capture capture() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null || !(mc.hitResult instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK)
             return new Rejected("not_block", "");

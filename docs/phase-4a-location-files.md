@@ -1,6 +1,6 @@
 # Phase 4A Location Files
 
-Issue #9 implements the **Location File** control of the design ([§8](../litematica-collaboration-design-v0.1.md), AC-15): a per-world profile that records which container blocks hold the materials for a build. Phase 4A only registers and remembers positions. **Check Materials** (Issue #10) is not implemented; nothing here reads container contents, counts items or changes Total/Missing/Available, progress or completion.
+Issue #9 implements the **Location File** control of the design ([§8](../litematica-collaboration-design-v0.1.md), AC-15): a per-world profile that records which container blocks hold the materials for a build. Phase 4A only registers and remembers positions. Nothing in Phase 4A reads container contents, counts items or changes Total/Missing/Available, progress or completion; **Check Materials** (Issue #10) is described in [Phase 4B Check Materials](phase-4b-check-materials.md).
 
 ## Use
 

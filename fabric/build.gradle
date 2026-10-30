@@ -86,6 +86,36 @@ tasks.register('verifyLocationFiles') {
     }
 }
 
+// Issue #10: Check Materials must have passed in the singleplayer first process (confirmed by its fresh restore process) and
+// in both multiplayer clients: R1 operator read and grant, R2 Member denied then granted, Viewer denied, OBSERVED fallback.
+tasks.register('verifyStockScan') {
+    group = 'verification'
+    description = 'Require Phase 4B Check Materials evidence from the client restart pair and the two-client dedicated-server harness.'
+    dependsOn 'verifyClientRestart', 'verifyMultiplayer'
+    doLast {
+        def log = layout.buildDirectory.file('run/clientGameTest/logs/latest.log').get().asFile
+        def started = tasks.named('runClientGameTestRestore').get().ext.restoreStartedMillis
+        if (!log.exists() || log.lastModified() < started || !log.text.contains('Phase 4B Check Materials restore PASS')
+            || log.text.contains('Client gametests failed with an exception')) {
+            throw new GradleException('Phase 4B Check Materials did not pass in the current client restart pair; inspect the client gametest log.')
+        }
+        def consoles = layout.buildDirectory.dir('run/multiplayer/consoles').get().asFile
+        def required = [
+            alpha: ['Multiplayer alpha stock operator read and grant PASS'],
+            beta: ['Multiplayer beta stock member UNAUTHORIZED then granted CHECKED PASS', 'Multiplayer beta stock viewer UNAUTHORIZED PASS',
+                   'Multiplayer beta stock fallback OBSERVED PASS']
+        ]
+        required.each { role, markers ->
+            def console = new File(consoles, role + '.log')
+            if (!console.exists()) throw new GradleException("Multiplayer ${role} console log is missing.")
+            def text = console.text
+            markers.each { marker -> if (!text.contains(marker)) throw new GradleException("Multiplayer ${role} did not reach: ${marker}") }
+        }
+        def server = new File(consoles, 'server.log')
+        if (!server.exists() || !server.text.contains('Stock scan COMPLETE')) throw new GradleException('The dedicated server never completed a Check Materials scan.')
+    }
+}
+
 sourceSets {
     serverSmoke {
         compileClasspath += sourceSets.main.compileClasspath
@@ -410,6 +440,9 @@ tasks.register('verifyMultiplayer') {
         project.delete(root)
         [coordination, consoles, serverDir, alphaDir, betaDir].each { it.mkdirs() }
         [serverDir, alphaDir, betaDir].each { new File(it, 'eula.txt').text = 'eula=true\n' }
+        // Issue #10: alpha is a server operator (the Check Materials R1 admin); beta is not. Offline-mode account UUID.
+        def alphaUuid = UUID.nameUUIDFromBytes('OfflinePlayer:McmlAlpha'.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        new File(serverDir, 'ops.json').text = groovy.json.JsonOutput.toJson([[uuid: alphaUuid.toString(), name: 'McmlAlpha', level: 4, bypassesPlayerLimit: false]])
         def write = { name, value ->
             File temporary = new File(coordination, name + '.harness.tmp')
             temporary.text = value

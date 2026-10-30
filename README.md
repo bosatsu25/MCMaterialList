@@ -26,7 +26,11 @@ Unsupported servers leave local work usable. Unknown sent commands block depende
 
 ## Location Files
 
-The material list's **Location File** button opens per-world profiles of registered container positions (Issue #9, Phase 4A). **New...** creates one in the current dimension, a row selects the current profile, and **Edit...** adds the looked-at chest, trapped chest, barrel, shulker box, hopper, dropper or dispenser, removes positions, renames, or records the list's shared project. Double chests are registered once. Location Files need the world identity of singleplayer or a compatible MCMaterialList server; elsewhere the controls are disabled with the reason. Files are named only by UUID under `config/mcmateriallist/location-files/`. Check Materials is not implemented yet. See [Phase 4A Location Files](docs/phase-4a-location-files.md).
+The material list's **Location File** button opens per-world profiles of registered container positions (Issue #9, Phase 4A). **New...** creates one in the current dimension, a row selects the current profile, and **Edit...** adds the looked-at chest, trapped chest, barrel, shulker box, hopper, dropper or dispenser, removes positions, renames, or records the list's shared project. Double chests are registered once. Location Files need the world identity of singleplayer or a compatible MCMaterialList server; elsewhere the controls are disabled with the reason. Files are named only by UUID under `config/mcmateriallist/location-files/`. See [Phase 4A Location Files](docs/phase-4a-location-files.md).
+
+## Check Materials
+
+**Check Materials** (Issue #10, Phase 4B), next to the Location File control, asks the server to read the current Location File's containers. Server admins (operators, or the singleplayer/LAN owner) may read any position; other players read only positions a server admin who is the project's Administrator granted to the bound project, and only as Member or higher. The footer shows checked/unchecked locations, Show Info adds `Stock n (+previous, in machines) · Inventory n`, and **Stock details...** lists each location's status. Hoppers, droppers and dispensers count separately as machines; unchecked locations are never counted as zero. Without server support, or for refused positions, only your inventory and registered containers you opened yourself are shown, as OBSERVED. Results stay in memory; Total/Missing/Available and work are never changed. See [Phase 4B Check Materials](docs/phase-4b-check-materials.md).
 
 ## Build and verification
 
@@ -37,7 +41,7 @@ Use JDK 25 as `JAVA_HOME`:
 .\gradlew.bat :fabric:verifyClientRestart
 # Only after accepting https://aka.ms/MinecraftEULA:
 .\gradlew.bat :fabric:verifyServerSmoke -PacceptMinecraftEula=true
-# Full retained local/restart/server gates, shared transport and native UI, and Location Files:
+# Full retained local/restart/server gates, shared transport and native UI, Location Files and Check Materials:
 .\gradlew.bat clean verifyPhase4 -PacceptMinecraftEula=true
 ```
 
