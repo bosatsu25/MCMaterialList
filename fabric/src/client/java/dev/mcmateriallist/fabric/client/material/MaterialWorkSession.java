@@ -43,6 +43,8 @@ public final class MaterialWorkSession {
     private ButtonGeneric recoverButton;
     private long sharedVersion = -1;
     private boolean sharedRebuild;
+    private final dev.mcmateriallist.fabric.client.location.LocationSession locations;
+    private boolean locationRebuild;
     public MaterialWorkSession(GuiMaterialList screen) {
         this.screen = screen;
         LocalPlacementId identity = null;
@@ -54,12 +56,14 @@ public final class MaterialWorkSession {
         placement = identity;
         shared = new dev.mcmateriallist.fabric.client.shared.SharedWorkBackend(MCMaterialListClient.shared(), placement, DatasetKind.MATERIALS,
             () -> PlacementWorkAdapter.owner(screen.getMaterialList()), screen::getMaterialList, this::ready);
+        locations = new dev.mcmateriallist.fabric.client.location.LocationSession(() -> { if (Minecraft.getInstance().gui.screen() == screen) screen.initGui(); });
     }
     public dev.mcmateriallist.fabric.client.shared.SharedWorkBackend shared() { return shared; }
+    public dev.mcmateriallist.fabric.client.location.LocationSession location() { return locations; }
     public static String text(String key, Object... args) { return Component.translatable("mcmateriallist.material." + key, args).getString(); }
     public MaterialWorkDataset dataset() { return confirmed; }
     public StoreStatus status() { return status; }
-    public boolean pending() { return pending || shared.pending(); }
+    public boolean pending() { return pending || shared.pending() || locations.pending(); }
     public boolean showInfo() { return showInfo; }
     public boolean hideDone() { return hideDone; }
     public boolean compact() {
@@ -131,17 +135,48 @@ public final class MaterialWorkSession {
             share.setY(filterY);
         }
         share.setHoverStrings(dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("title"));
+        // Location File follows Show Info/Hide Done where that row has room; Share keeps its verified slot and the
+        // button takes the first free toolbar row instead, narrowing (full hover label) only if no row fits.
+        locations.ensure();
+        String location = locations.label();
+        int footer = screen.getScreenHeight() - 22, lower = screen.getScreenHeight() - 58;
+        int[] slot = slot(toolbarWidth(location), compact ? new int[][]{{filterY, 0}, {footer, 0}, {lower, refreshX + refreshButton.getWidth() + 2}}
+            : new int[][]{{filterY, 0}, {lower, 0}, {footer, 0}});
+        addToolbar(slot[0], slot[1], slot[2], location, (button, mouse) ->
+            GuiBase.openGui(new dev.mcmateriallist.fabric.client.location.LocationFileScreen(screen, locations, shared)));
     }
-    private ButtonGeneric addToolbar(int x, int y, String label, IButtonActionListener action) {
-        int width = Math.min(screen.getStringWidth(label) + 10, Math.max(28, (screen.getScreenWidth() - 24) / 4 - 4));
+    private int toolbarWidth(String label) { return Math.min(screen.getStringWidth(label) + 10, Math.max(28, (screen.getScreenWidth() - 24) / 4 - 4)); }
+    private ButtonGeneric addToolbar(int x, int y, String label, IButtonActionListener action) { return addToolbar(x, y, toolbarWidth(label), label, action); }
+    private ButtonGeneric addToolbar(int x, int y, int width, String label, IButtonActionListener action) {
         var button = new ButtonGeneric(x, y, width, 20, MaterialPresentation.clamp(label, width - 8));
         button.setHoverStrings(label); return screen.addButton(button, action);
+    }
+    /** {x, y, width}: after the last control of the first row ({y, minimum x}) that fits inside the screen, else the widest. */
+    private int[] slot(int width, int[][] rows) {
+        var buttons = ((dev.mcmateriallist.fabric.client.mixin.GuiButtonsAccess) screen).mcmateriallist$buttons();
+        int limit = screen.getScreenWidth() - 12;
+        int[] widest = null;
+        for (int[] row : rows) {
+            int y = row[0];
+            int x = Math.max(row[1], buttons.stream().filter(other -> other.getY() < y + 20 && other.getY() + other.getHeight() > y)
+                .mapToInt(other -> other.getX() + other.getWidth() + 4).max().orElse(12));
+            if (x + width <= limit) return new int[]{x, y, width};
+            if (widest == null || limit - x > widest[2]) widest = new int[]{x, y, limit - x};
+        }
+        return new int[]{widest[0], widest[1], Math.max(28, widest[2])};
     }
     public void renderControls() {
         if (refreshButton != null) refreshButton.setEnabled(!shared.loading() && (shared.selected() ? !shared.pending() && ready() : !pending && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT)));
         if (recoverButton != null) recoverButton.setEnabled(!pending && !shared.loading() && ready());
     }
     public void footer(GuiContext ctx) {
+        if (!locationRebuild && locations.stale()) {
+            locationRebuild = true;
+            Minecraft.getInstance().schedule(() -> {
+                locationRebuild = false;
+                if (Minecraft.getInstance().gui.screen() == screen) screen.initGui();
+            });
+        }
         if (!sharedRebuild && sharedVersion != shared.version()) {
             sharedVersion = shared.version(); sharedRebuild = true;
             Minecraft.getInstance().schedule(() -> {

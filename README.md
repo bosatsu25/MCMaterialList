@@ -24,6 +24,10 @@ Total/Missing/Available, multiplier, Ignore, Hide Done and personal enabled-regi
 
 Unsupported servers leave local work usable. Unknown sent commands block dependent shared edits and remain attached to their original account/project, even after switching to local mode. After a fresh snapshot of that project, the client resends the exact original with the same operation ID; the server returns its recorded outcome, executes it once if it never arrived, or reports a conflict, and that answer settles it. Reconnecting to the same world and account re-joins the project the previous connection was synchronized to. **Recover metadata**, then **Confirm recovery**, preserves damaged bytes but cannot establish the outcome of a command missing from a backup; shared writes stay blocked, and local work remains available. See [Phase 3A usage, persistence and verification](docs/phase-3-shared-work.md) for these limits.
 
+## Location Files
+
+The material list's **Location File** button opens per-world profiles of registered container positions (Issue #9, Phase 4A). **New...** creates one in the current dimension, a row selects the current profile, and **Edit...** adds the looked-at chest, trapped chest, barrel, shulker box, hopper, dropper or dispenser, removes positions, renames, or records the list's shared project. Double chests are registered once. Location Files need the world identity of singleplayer or a compatible MCMaterialList server; elsewhere the controls are disabled with the reason. Files are named only by UUID under `config/mcmateriallist/location-files/`. Check Materials is not implemented yet. See [Phase 4A Location Files](docs/phase-4a-location-files.md).
+
 ## Build and verification
 
 Use JDK 25 as `JAVA_HOME`:
@@ -33,11 +37,11 @@ Use JDK 25 as `JAVA_HOME`:
 .\gradlew.bat :fabric:verifyClientRestart
 # Only after accepting https://aka.ms/MinecraftEULA:
 .\gradlew.bat :fabric:verifyServerSmoke -PacceptMinecraftEula=true
-# Full retained local/restart/server gates plus shared transport and native UI:
-.\gradlew.bat clean verifyPhase3 -PacceptMinecraftEula=true
+# Full retained local/restart/server gates, shared transport and native UI, and Location Files:
+.\gradlew.bat clean verifyPhase4 -PacceptMinecraftEula=true
 ```
 
-`verifyPhase0`, `verifyPhase1` and `verifyPhase2` remain available. Linux/macOS use `./gradlew`; Linux client tests need a display, for example `xvfb-run -a ./gradlew verifyPhase3 -PacceptMinecraftEula=true`.
+`verifyPhase0` to `verifyPhase3` remain available. Linux/macOS use `./gradlew`; Linux client tests need a display, for example `xvfb-run -a ./gradlew verifyPhase4 -PacceptMinecraftEula=true`.
 
 The distribution is `fabric/build/libs/fabric-0.1.0-phase.3a.jar` and includes the core library. Fabric API is required on both sides; pinned Litematica/MaLiLib are client-only. Unsupported or missing client mods disable the adapter. The dedicated server needs neither optional client mod. `:fabric:runClient` launches the normal development client. Minecraft 26.2 is unobfuscated: Loom uses `jar`, without external mappings or `remapJar`.
 

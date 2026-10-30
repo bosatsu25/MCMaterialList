@@ -51,3 +51,8 @@ tasks.register('verifyPhase3') {
     description = 'Run all retained local/restart/server gates, shared socket transport, native shared UI integration, and two real clients against a restarted dedicated server.'
     dependsOn 'verifyPhase2', ':fabric:verifySharedTransport', ':fabric:runSharedUiTest', ':fabric:verifyMultiplayer'
 }
+tasks.register('verifyPhase4') {
+    group = 'verification'
+    description = 'Run every retained Phase 0-3 gate plus Phase 4A Location Files: real UI registration, cross-dimension refusal and fresh-process persistence.'
+    dependsOn 'verifyPhase3', ':fabric:verifyLocationFiles'
+}
