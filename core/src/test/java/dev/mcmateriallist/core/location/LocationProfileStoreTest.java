@@ -89,12 +89,13 @@ class LocationProfileStoreTest {
         Path profiles = file(world, good.id()).getParent();
         Files.copy(file(world, good.id()), profiles.resolve(good.id().toString().toUpperCase(java.util.Locale.ROOT) + ".json"));
         Files.writeString(profiles.resolve("README.txt"), "x"); Files.writeString(profiles.resolve(UUID.randomUUID() + ".JSON"), "x");
-        Files.writeString(profiles.resolve(UUID.randomUUID() + ".json.bak"), "x"); Files.writeString(profiles.resolve("not-a-uuid.json"), "x");
+        var orphan = LocationProfileId.create(); Files.writeString(profiles.resolve(orphan + ".json.bak"), "x"); Files.writeString(profiles.resolve("not-a-uuid.json"), "x");
         Files.writeString(profiles.resolve("{" + UUID.randomUUID() + "}.json"), "x");
         var broken = LocationProfileId.create(); Files.writeString(file(world, broken), "{broken");
         var directory = LocationProfileId.create(); Files.createDirectory(file(world, directory));
         var listed = store.list(world); assertTrue(listed.ok());
-        assertEquals(3, listed.value().size());
+        // A backup without its primary is listed with the backup's own status, never hidden.
+        assertEquals(4, listed.value().size()); assertEquals(StoreStatus.CORRUPT, status(listed.value(), orphan));
         assertEquals(StoreStatus.OK, status(listed.value(), good.id())); assertEquals(good, listed.value().stream().filter(e -> e.id().equals(good.id())).findFirst().orElseThrow().profile());
         assertEquals(StoreStatus.CORRUPT, status(listed.value(), broken)); assertEquals(StoreStatus.INVALID_PATH, status(listed.value(), directory));
         assertEquals(List.of(), store.list(new WorldIdentity(UUID.randomUUID())).value());
@@ -124,6 +125,9 @@ class LocationProfileStoreTest {
         assertEquals(StoreStatus.OK, store.save(first.rename("after"), first.generation()).status());
         Files.delete(primary);
         assertEquals(StoreStatus.RECOVERY_REQUIRED, store.load(world, first.id()).status());
+        // Backup-only profiles stay listed so the UI can offer explicit recovery.
+        var listed = store.list(world).value();
+        assertEquals(1, listed.size()); assertEquals(first.id(), listed.get(0).id()); assertEquals(StoreStatus.RECOVERY_REQUIRED, listed.get(0).status());
         assertEquals(StoreStatus.CONFLICT, store.save(first, -1).status());
         assertEquals(StoreStatus.OK, store.recover(world, first.id()).status());
         assertEquals(StoreStatus.CONFLICT, store.save(LocationProfile.create(world, "minecraft:overworld", "x"), 0).status());

@@ -15,6 +15,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -30,7 +32,8 @@ import java.util.regex.Pattern;
 public final class LocationProfileStore {
     public static final int MAX_FILE_BYTES = LocationProfileCodec.MAX_BYTES;
     static final int MAX_SCANNED_ENTRIES = 4096;
-    private static final Pattern PROFILE_FILE = Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.json");
+    // A profile whose primary is gone but whose backup survives is still listed (as RECOVERY_REQUIRED), never hidden.
+    private static final Pattern PROFILE_FILE = Pattern.compile("([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.json(\\.bak)?");
     private final Path worlds;
     private final LocationProfileCodec codec = new LocationProfileCodec();
     private final WriteHook hook;
@@ -61,19 +64,19 @@ public final class LocationProfileStore {
         try {
             LocationFiles.guard(directory, true);
             if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return new LocationResult<>(StoreStatus.OK, List.of());
-            List<LocationProfileId> ids = new ArrayList<>(); int scanned = 0;
+            Set<LocationProfileId> ids = new HashSet<>(); int scanned = 0;
             try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
                 for (Path entry : entries) {
                     if (++scanned > MAX_SCANNED_ENTRIES) return LocationResult.failure(StoreStatus.TOO_LARGE);
-                    String name = entry.getFileName().toString();
-                    if (!PROFILE_FILE.matcher(name).matches()) continue;
-                    if (ids.size() == LocationLimits.MAX_PROFILES) return LocationResult.failure(StoreStatus.TOO_LARGE);
-                    ids.add(LocationProfileId.parse(name.substring(0, name.length() - ".json".length())));
+                    var name = PROFILE_FILE.matcher(entry.getFileName().toString());
+                    if (!name.matches()) continue;
+                    var id = LocationProfileId.parse(name.group(1));
+                    if (!ids.contains(id) && ids.size() == LocationLimits.MAX_PROFILES) return LocationResult.failure(StoreStatus.TOO_LARGE);
+                    ids.add(id);
                 }
             }
-            ids.sort(Comparator.comparing(LocationProfileId::toString));
             List<ProfileEntry> result = new ArrayList<>(ids.size());
-            for (LocationProfileId id : ids) { var loaded = load(world, id); result.add(new ProfileEntry(id, loaded.status(), loaded.value())); }
+            for (LocationProfileId id : ids.stream().sorted(Comparator.comparing(LocationProfileId::toString)).toList()) { var loaded = load(world, id); result.add(new ProfileEntry(id, loaded.status(), loaded.value())); }
             return new LocationResult<>(StoreStatus.OK, List.copyOf(result));
         } catch (LocationFiles.UnsafePathException exception) { return LocationResult.failure(StoreStatus.INVALID_PATH); }
         catch (IOException | DirectoryIteratorException exception) { return LocationResult.failure(StoreStatus.IO_FAILURE); }

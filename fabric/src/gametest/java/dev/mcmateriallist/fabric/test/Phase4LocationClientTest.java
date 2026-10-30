@@ -112,7 +112,7 @@ public final class Phase4LocationClientTest implements FabricClientGameTest {
             context.waitForScreen(LocationFileScreen.class);
             var files = context.computeOnClient(mc -> (LocationFileScreen) mc.gui.screen());
             context.waitFor(mc -> !files.pending() && files.entries() != null);
-            check(files.entries().isEmpty() && files.selected() == null, "Fresh world listed Location Files");
+            check(files.listStatus() == StoreStatus.OK && files.entries().isEmpty() && files.selected() == null, "Fresh world listed Location Files");
             create(context, files, "taichi_ms", 1);
             create(context, files, "../evil", 2);
             check(files.selected().displayName().equals("../evil"), "Creation did not make the new Location File current");
@@ -235,7 +235,7 @@ public final class Phase4LocationClientTest implements FabricClientGameTest {
             var files = context.computeOnClient(mc -> new LocationFileScreen(null, session, null));
             context.setScreen(() -> files);
             context.waitFor(mc -> !files.pending() && files.entries() != null);
-            check(files.entries().isEmpty() && files.selected() == null, "Another world's Location Files are visible");
+            check(files.listStatus() == StoreStatus.OK && files.entries().isEmpty() && files.selected() == null, "Another world's Location Files are visible");
             UiParityEvidence.capture(context, files, "phase4-location-other-world");
             context.runOnClient(mc -> GuiBase.openGui(null));
         }

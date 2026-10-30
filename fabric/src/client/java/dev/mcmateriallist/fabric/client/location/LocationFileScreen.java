@@ -14,6 +14,7 @@ public final class LocationFileScreen extends LocationScreen {
     private final SharedWorkBackend shared;
     private LocationWorld.Resolution world;
     private List<ProfileEntry> entries;
+    private StoreStatus listStatus;
     private CurrentLocation current;
     private LocationProfileId confirmRecovery;
     private boolean confirmSelection, dirty;
@@ -24,7 +25,9 @@ public final class LocationFileScreen extends LocationScreen {
         super(session, "title"); setParent(parent); this.shared = shared;
     }
     /** Null until the listing of the current world has been read. */
+    /** Null until a listing succeeds: a failed listing is never shown (or tested) as an empty world. */
     public List<ProfileEntry> entries() { return entries; }
+    public StoreStatus listStatus() { return listStatus; }
     public LocationProfile selected() {
         return current != null && current.profile() != null && current.profile().ok() ? current.profile().value() : null;
     }
@@ -34,7 +37,7 @@ public final class LocationFileScreen extends LocationScreen {
     @Override public void initGui() {
         var now = LocationWorld.resolve();
         if (world == null || !LocationWorld.same(now, world)) {
-            world = now; entries = null; current = null; confirmRecovery = null; confirmSelection = false; page = 0; dirty = false;
+            world = now; entries = null; listStatus = null; current = null; confirmRecovery = null; confirmSelection = false; page = 0; dirty = false;
             if (now instanceof LocationWorld.Available available) load(available);
         } else if (dirty && now instanceof LocationWorld.Available available) { dirty = false; load(available); }
         super.initGui();
@@ -76,7 +79,7 @@ public final class LocationFileScreen extends LocationScreen {
     private void load(LocationWorld.Available context) {
         var service = MCMaterialListClient.locations();
         await(context, service.list(context.world()).thenCombine(service.current(context.world()), Loaded::new), loaded -> {
-            entries = loaded.list().ok() ? loaded.list().value() : List.of(); current = loaded.current();
+            listStatus = loaded.list().status(); entries = loaded.list().ok() ? loaded.list().value() : null; current = loaded.current();
             if (!loaded.list().ok()) report("storage", loaded.list().status().name());
         });
     }

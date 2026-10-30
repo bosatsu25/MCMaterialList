@@ -3,12 +3,10 @@ package dev.mcmateriallist.fabric.client.location;
 import dev.mcmateriallist.core.location.LocationLimits;
 import dev.mcmateriallist.core.location.LocationOutcome;
 import dev.mcmateriallist.core.location.LocationProfile;
-import dev.mcmateriallist.core.location.LocationUpdate;
 import dev.mcmateriallist.fabric.client.MCMaterialListClient;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.GuiTextFieldMultiLine;
 import fi.dy.masa.malilib.render.GuiContext;
-import java.util.concurrent.CompletableFuture;
 
 /** Create/rename input. The name is a stored value only; files are always named by profile UUID. */
 public final class LocationNameScreen extends LocationScreen {
@@ -36,16 +34,24 @@ public final class LocationNameScreen extends LocationScreen {
         if (!LocationLimits.displayName(name)) { report("invalid_name"); return; }
         if (!(LocationWorld.resolve() instanceof LocationWorld.Available context)) { report("reject.unavailable"); return; }
         var service = MCMaterialListClient.locations();
-        CompletableFuture<LocationUpdate> update;
         if (original == null) {
-            // The new profile becomes the world's current one; a failed selection leaves it listed but not current.
-            update = service.create(context.world(), context.dimension(), name).thenCompose(created -> created.outcome() != LocationOutcome.CHANGED
-                ? CompletableFuture.completedFuture(created) : service.select(context.world(), created.storage().value().id()).thenApply(selection -> created));
-        } else if (!context.world().equals(original.world())) { report("reject.other_world"); return; }
-        else update = service.rename(context.world(), original.id(), original.generation(), name);
-        await(context, update, result -> {
-            if (result.outcome() == LocationOutcome.CHANGED) { session.reload(); changed.run(); back(); return; }
-            report(result);
+            await(context, service.create(context.world(), context.dimension(), name), created -> {
+                if (created.outcome() != LocationOutcome.CHANGED) { report(created); return; }
+                session.reload(); changed.run();
+                // The new profile becomes current only if the player is still here; a choice made meanwhile is kept.
+                if (mc.gui.screen() != this) return;
+                await(context, service.select(context.world(), created.storage().value().id()), selected -> {
+                    session.reload(); changed.run();
+                    if (mc.gui.screen() == this) back();
+                });
+            });
+            return;
+        }
+        if (!context.world().equals(original.world())) { report("reject.other_world"); return; }
+        await(context, service.rename(context.world(), original.id(), original.generation(), name), result -> {
+            if (result.outcome() != LocationOutcome.CHANGED) { report(result); return; }
+            session.reload(); changed.run();
+            if (mc.gui.screen() == this) back();
         });
     }
     @Override protected void drawContents(GuiContext ctx, int mouseX, int mouseY, float ticks) {

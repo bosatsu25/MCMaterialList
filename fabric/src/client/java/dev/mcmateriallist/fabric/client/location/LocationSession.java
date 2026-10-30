@@ -21,7 +21,11 @@ public final class LocationSession {
     /** Loads the current profile once per world/listener; the label never describes another world. */
     public void ensure() {
         var now = LocationWorld.resolve();
-        if (shown != null && LocationWorld.same(now, shown)) return;
+        if (shown != null && LocationWorld.same(now, shown)) {
+            // A read dropped while the world was briefly unresolved is retried instead of leaving the label loading.
+            if (shown instanceof LocationWorld.Available available && current == null && !loading) load(available);
+            return;
+        }
         shown = now; current = null; request++; loading = false;
         if (now instanceof LocationWorld.Available available) load(available);
     }
