@@ -26,8 +26,7 @@ final class LookedAtContainer {
             return new Rejected("not_block", "");
         BlockPos pos = hit.getBlockPos();
         if (!mc.level.hasChunkAt(pos)) return new Rejected("not_loaded", "");
-        // The same tolerance the server applies to block interaction.
-        if (!mc.player.canInteractWithBlock(pos, 1.0)) return new Rejected("out_of_range", "");
+        // Reach needs no separate check: the game only produces a BLOCK hit result within the player's interaction range.
         BlockState state = mc.level.getBlockState(pos);
         String id = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
         if (!ContainerBlocks.supported(id)) return new Rejected("unsupported_block", id);

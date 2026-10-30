@@ -17,7 +17,7 @@ Every action resolves the world again on the client thread. Results are applied 
 |---|---|
 | Unavailable / other world | No world identity here, or the profile belongs to another world |
 | Other dimension | The player is not in the profile's dimension |
-| Not looking at a block / out of reach / not loaded | The client hit result is not a block, the block (or the other chest half) is not loaded, or it is beyond the server's block-interaction tolerance |
+| Not looking at a block / out of reach / not loaded | The client hit result is not a block, the block (or the other chest half) is not loaded, or its coordinates are outside the supported range. Reach is enforced by the game itself: it only produces a block hit result within the player's interaction range |
 | Not a registrable container | The block id is outside the allowlist |
 | Already registered | The position, or the other half of the same double chest, is registered |
 
@@ -53,4 +53,4 @@ Limits: 512 containers per profile, 256 profiles per world, display names of 1-6
 - First process: the material list shows **Location File: (none)**; profiles `taichi_ms` and `../evil` are created through the real form, and only UUID-named files exist. Real placed blocks are aimed at and added: a chest, one double chest half (stored at its smaller position), a barrel and a hopper are accepted; the other double chest half is a duplicate; stone and an ender chest are refused; looking at the sky is refused. A position is removed and the profile is renamed. In the nether, adding to the overworld profile is refused without a write. `materials.json` and `.litematic` bytes are unchanged, and a reopened list reads the same current profile without rewriting it.
 - Fresh restore process: the same profile and `current.json` bytes, current selection, name, generation and positions are read back unchanged; a different world resolves to another identity and lists no profiles.
 
-Not covered: binding through a shared project in the client gametest (core tests cover bind/unbind rules), the out-of-reach and unloaded-chunk refusals in a real client, shulker boxes, droppers and dispensers in the client gametest, multiplayer servers other than the integrated server, and container contents.
+Not covered: binding through a shared project in the client gametest (core tests cover bind/unbind rules), the unloaded-chunk refusal in a real client, shulker boxes, droppers and dispensers in the client gametest, multiplayer servers other than the integrated server, and container contents.
