@@ -128,4 +128,19 @@ class StockLedgerTest {
         assertEquals(5, snapshot.previousMachine(STONE).count()); assertEquals(1, snapshot.previousMachine(STONE).locations());
         assertEquals(StockSnapshot.Previous.NONE, snapshot.previous(STONE)); assertEquals(0, snapshot.machine(STONE));
     }
+
+    @Test void aReadingOfOneHalfSupersedesAKeptDoubleChestReading() {
+        // Index 0 and 4 are the two halves; the double chest was observed as 15 under index 0.
+        var ledger = new StockLedger(clock); ledger.begin(profile);
+        var a = profile.positions().get(0); var b = profile.positions().get(4);
+        assertTrue(ledger.accept(new LocationReport(0, LocationStatus.OBSERVED, ContainerKind.STORAGE, Map.of(STONE, 15L)), start, List.of(a, b)));
+        assertTrue(ledger.accept(LocationReport.empty(4, LocationStatus.DUPLICATE, ContainerKind.STORAGE)));
+        ledger.complete();
+        // A was broken; the remaining chest B now holds 5. The old combined 15 must not be counted next to it.
+        now[0] = start.plusSeconds(30); ledger.begin(profile);
+        assertTrue(ledger.accept(new LocationReport(4, LocationStatus.OBSERVED, ContainerKind.STORAGE, Map.of(STONE, 5L)), now[0], List.of(b)));
+        ledger.complete();
+        var snapshot = ledger.snapshot(world, profile).orElseThrow();
+        assertEquals(5, snapshot.previous(STONE).count()); assertEquals(1, snapshot.previous(STONE).locations());
+    }
 }

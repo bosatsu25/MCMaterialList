@@ -67,6 +67,8 @@ public final class StockObservations {
     public static int size() { return observed.size(); }
     public static void discard() { observed.clear(); halves.clear(); inventory = Map.of(); menu = null; open = null; }
     private static Map<ContainerPosition, List<ContainerPosition>> halves() { return halves; }
+    /** The block positions the observation at position covers (both halves of an observed double chest), or just position. */
+    public static List<ContainerPosition> halvesOf(ContainerPosition position) { return halves.getOrDefault(position, List.of(position)); }
     private static boolean same(ContainerPosition a, ContainerPosition b) { return a.x() == b.x() && a.y() == b.y() && a.z() == b.z(); }
 
     private static Open attribute(AbstractContainerMenu current) {

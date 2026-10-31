@@ -27,6 +27,8 @@ public final class StockLedger {
     private Instant startedAt, completedAt;
     private final Map<Integer, LocationReport> reports = new HashMap<>();
     private final Map<ContainerPosition, StockReading> readings = new HashMap<>();
+    /** The block positions each kept reading covers: both halves when it was read as a double chest, else its own position. */
+    private final Map<ContainerPosition, List<ContainerPosition>> spans = new HashMap<>();
 
     public StockLedger(Clock clock) { this.clock = Objects.requireNonNull(clock, "clock"); }
 
@@ -34,28 +36,39 @@ public final class StockLedger {
     public void begin(LocationProfile profile) {
         if (!profile.world().equals(world) || !profile.id().equals(profileId)) discard();
         world = profile.world(); profileId = profile.id(); generation = profile.generation(); positions = profile.positions();
-        readings.keySet().retainAll(new HashSet<>(positions));
+        readings.keySet().retainAll(new HashSet<>(positions)); spans.keySet().retainAll(readings.keySet());
         reports.clear(); startedAt = clock.instant(); completedAt = null;
     }
     /** A server frame, timed by the ledger clock. */
     public boolean accept(LocationReport report) { return accept(report, clock.instant()); }
     /** False (and ignored) for a report outside the running scan, a repeated index, or a kind that differs from the registered block. */
-    public boolean accept(LocationReport report, Instant at) {
+    public boolean accept(LocationReport report, Instant at) { return accept(report, at, null); }
+    /**
+     * halves are the block positions this reading covers (both halves of a double chest); null means the registered position only.
+     * A new reading supersedes every kept reading whose covered positions overlap it, so a combined double-chest reading and a later
+     * reading of one of its halves are never both counted.
+     */
+    public boolean accept(LocationReport report, Instant at, List<ContainerPosition> halves) {
         Objects.requireNonNull(report, "report"); Objects.requireNonNull(at, "at");
         if (startedAt == null || completedAt != null || report.index() >= positions.size() || reports.containsKey(report.index())) return false;
         ContainerPosition position = positions.get(report.index());
         if (report.kind() != ContainerBlocks.kind(position.blockId())) return false;
         reports.put(report.index(), report);
-        if (report.status().read()) readings.put(position, StockReading.of(report, at));
+        if (report.status().read()) {
+            List<ContainerPosition> covered = halves == null || halves.isEmpty() ? List.of(position) : List.copyOf(halves);
+            readings.keySet().removeIf(key -> !key.equals(position) && spans.getOrDefault(key, List.of(key)).stream().anyMatch(old -> covers(covered, old)));
+            spans.keySet().retainAll(readings.keySet());
+            readings.put(position, StockReading.of(report, at)); spans.put(position, covered);
+        }
         // Its contents belong to another index now; an old reading would be counted twice as previous.
-        else if (report.status() == LocationStatus.DUPLICATE) readings.remove(position);
+        else if (report.status() == LocationStatus.DUPLICATE) { readings.remove(position); spans.remove(position); }
         return true;
     }
     /** Done or cancelled: unreported locations stay unchecked. */
     public void complete() { if (scanning()) completedAt = clock.instant(); }
     public boolean scanning() { return startedAt != null && completedAt == null; }
     public void discard() {
-        world = null; profileId = null; generation = 0; positions = List.of(); startedAt = completedAt = null; reports.clear(); readings.clear();
+        world = null; profileId = null; generation = 0; positions = List.of(); startedAt = completedAt = null; reports.clear(); readings.clear(); spans.clear();
     }
     /**
      * Empty without a scan; a different world or profile discards everything. A stale scan (five minutes, or another generation) is
@@ -74,5 +87,8 @@ public final class StockLedger {
             if (reading != null && (report == null || report.status() != LocationStatus.CHECKED && report.status() != LocationStatus.DUPLICATE)) previous.put(i, reading);
         }
         return Optional.of(new StockSnapshot(profileId, generation, world, positions, startedAt, completedAt, List.copyOf(reports.values()), previous));
+    }
+    private static boolean covers(List<ContainerPosition> covered, ContainerPosition at) {
+        return covered.stream().anyMatch(half -> half.x() == at.x() && half.y() == at.y() && half.z() == at.z());
     }
 }
