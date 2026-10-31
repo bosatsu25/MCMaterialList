@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
+import java.util.function.UnaryOperator;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -36,9 +37,15 @@ public final class SharedWorkController {
         SharedClientArchive.Binding binding(DatasetKind kind) { return archive == null ? null : archive.binding(kind); }
     }
     private record Verified(NativeSharedCapture.Source source, String digest) {}
+    /** rejoin: an explicit Rejoin shared regions join of a detached copy's original scope (#11); never select(). */
     private record Request(SharedWorkBackend backend, UUID actor, ClientPacketListener listener,
         SharedClientArchive.Reference previous, NativeSharedCapture.Capture capture, String digest,
-        boolean select, long started) {}
+        boolean select, long started, boolean rejoin) {
+        Request(SharedWorkBackend backend, UUID actor, ClientPacketListener listener, SharedClientArchive.Reference previous,
+                NativeSharedCapture.Capture capture, String digest, boolean select, long started) {
+            this(backend, actor, listener, previous, capture, digest, select, started, false);
+        }
+    }
     private record Admin(Entry entry, SharedClientArchive.Reference original, ClientPacketListener listener, long started) {}
     /** One replay per original command, connection and fresh snapshot installation. */
     private record Replayed(ClientPacketListener listener, long installation) {}
@@ -67,7 +74,10 @@ public final class SharedWorkController {
     Entry attach(LocalPlacementId placement) {
         if (placement == null || closed) return null;
         Entry existing = entries.get(placement); if (existing != null) return existing;
-        // Native parent screens can retain their backend until closed. Never orphan a live entry.
+        // Native parent screens can retain their backend until closed. Never orphan a live entry; only an idle entry with
+        // nothing to replay, restore or hide is dropped, and it reloads from disk (detached copy included) when reopened.
+        if (entries.size() >= OPEN_PLACEMENTS) entries.values().stream().filter(this::evictable).findFirst()
+            .ifPresent(idle -> entries.remove(idle.placement));
         if (entries.size() >= OPEN_PLACEMENTS) return null;
         Entry entry = new Entry(placement); entries.put(placement, entry);
         service.load(placement).whenComplete((result, failure) -> later(() -> {
@@ -143,6 +153,8 @@ public final class SharedWorkController {
         if (entry.storage != StoreStatus.OK && entry.storage != StoreStatus.MISSING) return "storage." + entry.storage.name();
         var ref = reference(entry, backend.kind());
         if (entry.busy > 0 || cachePending(backend)) return "saving";
+        if (ref == null && detached(entry, backend.kind()) != null)
+            return entry.reason == null || entry.reason.equals("result.OK") || entry.reason.equals("local_preserved") ? "detached" : entry.reason;
         if (ref == null) return SharedClientNetworking.state().capabilities() == null || entry.reason == null ? availability() : entry.reason;
         if (!ref.actor().equals(actor())) return "account_mismatch";
         if (entry.archive.recoveredJournalUncertain()) return "recovered_uncertain";
@@ -177,6 +189,7 @@ public final class SharedWorkController {
     }
     public void create(SharedWorkBackend backend, String name) {
         if (!requestReady(backend)) return;
+        if (detached(backend.entry(), backend.kind()) != null) { setReason(backend.entry(), "detached_rejoin_required"); return; }
         if (name == null || name.isBlank() || !TextLimits.valid(name, 256)) { setReason(backend.entry(), "invalid_name"); return; }
         prepare(backend, true, (capture, digest) -> {
             try {
@@ -190,6 +203,8 @@ public final class SharedWorkController {
     }
     public void join(SharedWorkBackend backend, ProjectScope scope, boolean select) {
         if (!requestReady(backend)) return;
+        // A detached copy is replaced only by Rejoin shared regions, which exports it first (#11).
+        if (detached(backend.entry(), backend.kind()) != null) { setReason(backend.entry(), "detached_rejoin_required"); return; }
         if (!SharedClientNetworking.state().capabilities().worldNamespace().equals(scope.worldNamespace())) { setReason(backend.entry(), "wrong_world"); return; }
         prepare(backend, select && backend.kind() == DatasetKind.MATERIALS, (capture, digest) -> {
             try {
@@ -239,6 +254,129 @@ public final class SharedWorkController {
                 setReason(entry, "definition_requested");
             } catch (IllegalArgumentException | IllegalStateException unavailable) { setReason(entry, "request_failed"); }
         });
+    }
+    // Issue #11: unshare regions to a detached local copy, and rejoin. REGIONS only; materials never detach.
+    static SharedClientArchive.Detached detached(Entry entry, DatasetKind kind) {
+        var binding = entry == null || kind != DatasetKind.REGIONS ? null : entry.binding(kind);
+        return binding == null ? null : binding.detached();
+    }
+    /** Sharing metadata was loaded but cannot be read or trusted: a detached copy might be hidden in it. */
+    static boolean metadataBlocked(Entry entry) {
+        return entry != null && !entry.loading && entry.storage != StoreStatus.OK && entry.storage != StoreStatus.MISSING;
+    }
+    /** No live screen, no work in flight, no shared reference, no unresolved original and nothing hidden. */
+    private boolean evictable(Entry entry) {
+        if (entry.loading || saving(entry) || !entry.hidden.isEmpty()
+            || entry.backends.values().stream().anyMatch(held -> held.get() != null)) return false;
+        var archive = entry.archive;
+        return archive == null || (archive.materials().shared() == null && archive.regions().shared() == null
+            && archive.operations().stream().allMatch(operation -> operation.confirmation() != null));
+    }
+    /** P6: no save, confirmation, administration or open request for this placement. */
+    private boolean saving(Entry entry) {
+        return entry.busy > 0 || !entry.confirming.isEmpty() || !entry.caching.isEmpty()
+            || requests.values().stream().anyMatch(request -> request.backend().entry() == entry)
+            || admins.values().stream().anyMatch(admin -> admin.entry() == entry);
+    }
+    private SharedClientService.UnshareCheck unshareCheck(Entry entry, SharedClientArchive.Reference ref) {
+        var state = SharedClientNetworking.state();
+        long live = ref != null && state.synchronizedState() && ref.scope().equals(state.scope()) ? state.cursor() : -1;
+        return SharedClientService.unshareCheck(entry.archive, actor(), live);
+    }
+    /** Null permits Unshare regions; otherwise a translation key. P1-P5 come from core, P6 and storage from here. */
+    String unshareReason(SharedWorkBackend backend) {
+        var entry = backend.entry();
+        if (closed || backend.kind() != DatasetKind.REGIONS) return "unshare.not_shared";
+        if (entry == null) return backend.nativeReady() ? "placement_capacity" : "placement_unavailable";
+        if (entry.loading) return "loading";
+        if (entry.storage == StoreStatus.MISSING || entry.archive == null) return "unshare.not_shared";
+        if (entry.storage != StoreStatus.OK) return "storage." + entry.storage.name();
+        var ref = reference(entry, DatasetKind.REGIONS); UUID actor = actor();
+        if (ref == null) return "unshare.not_shared";
+        // Offline (no player) still reports the journal reasons first: a disconnect never resolves an original.
+        if (actor != null && !ref.actor().equals(actor)) return "unshare.account_mismatch";
+        if (entry.archive.recoveredJournalUncertain()) return "unshare.recovered_uncertain";
+        if (unresolved(backend) > 0) return "unshare.unresolved_operations";
+        if (actor == null) return "unshare.join_required";
+        if (saving(entry) || cachePending(backend)) return "unshare.saving";
+        // The core check stays the authority for P1-P5 once online.
+        var check = unshareCheck(entry, ref);
+        if (check.reason() == SharedClientService.UnshareReason.JOIN_REQUIRED || !synchronizedView(backend)) return "unshare.join_required";
+        if (check.reason() != null) return "unshare." + check.reason().key();
+        return null;
+    }
+    /** Unresolved REGIONS originals of any account or scope (P3), for the disabled reason. */
+    int unresolved(SharedWorkBackend backend) {
+        var entry = backend.entry();
+        return entry == null || entry.archive == null ? 0 : (int) entry.archive.operations().stream()
+            .filter(operation -> operation.kind() == DatasetKind.REGIONS && operation.confirmation() == null).count();
+    }
+    public void unshare(SharedWorkBackend backend) {
+        if (unshareReason(backend) != null) return;
+        var entry = backend.entry(); var binding = entry.binding(DatasetKind.REGIONS); var ref = binding.shared();
+        // The core re-checks P1-P5 against the on-disk archive on the same serial queue as admission. Nothing is sent.
+        complete(entry, service.unshare(entry.placement, ref, binding.cache().cursor(), actor(), DatasetId.create()), result -> {
+            if (result.ok()) { verified.remove(ref.bindingId()); proofs.remove(ref.bindingId()); setReason(entry, null); }
+            else reload(entry, "unshare.state_changed");
+        });
+    }
+    /** Null permits Rejoin shared regions; otherwise a translation key. */
+    String rejoinReason(SharedWorkBackend backend) {
+        var entry = backend.entry();
+        if (closed || entry == null) return "unshare.not_detached";
+        if (entry.loading) return "loading";
+        if (entry.storage != StoreStatus.OK) return entry.storage == StoreStatus.MISSING ? "unshare.not_detached" : "storage." + entry.storage.name();
+        var copy = detached(entry, backend.kind());
+        if (copy == null) return "unshare.not_detached";
+        if (saving(entry) || requests.size() >= REQUESTS) return "unshare.saving";
+        var state = SharedClientNetworking.state();
+        if (actor() == null || state.capabilities() == null
+            || state.capabilities().protocolVersion() != dev.mcmateriallist.core.shared.protocol.SharedProtocol.VERSION) return availability();
+        if (!state.capabilities().worldNamespace().equals(copy.from().worldNamespace())) return "wrong_world";
+        return null;
+    }
+    /** An explicit source-verified join of the copy's original scope; on success rejoin() exports, then installs the snapshot. */
+    public void rejoin(SharedWorkBackend backend) {
+        if (rejoinReason(backend) != null || !requestReady(backend)) return;
+        var entry = backend.entry(); var from = detached(entry, backend.kind()).from();
+        prepare(backend, false, (capture, digest) -> {
+            var copy = detached(entry, backend.kind());
+            if (copy == null || !copy.from().equals(from)) { setReason(entry, "state_changed"); return; }
+            try {
+                UUID request = SharedClientNetworking.join(from);
+                requests.put(request, new Request(backend, actor(), Minecraft.getInstance().getConnection(), null, capture, digest, false, System.nanoTime(), true));
+                setReason(entry, "joining");
+            } catch (IllegalStateException unavailable) { setReason(entry, "request_failed"); }
+        });
+    }
+    /** Local edits of the copy are allowed whatever the journal says, but never while a save or request is open. */
+    boolean detachedWritable(SharedWorkBackend backend) {
+        var entry = backend.entry();
+        return !closed && entry != null && !entry.loading && entry.storage == StoreStatus.OK
+            && detached(entry, backend.kind()) != null && !saving(entry);
+    }
+    /**
+     * Apply one pure edit to the detached copy on the store queue; after receives the store status on the client thread.
+     * Returns false (and never calls after) when the copy is not editable now. Nothing is sent to the server.
+     */
+    boolean updateDetached(SharedWorkBackend backend, UnaryOperator<RegionWorkDataset> edit, Consumer<StoreStatus> after) {
+        var entry = backend.entry(); var copy = detached(entry, backend.kind());
+        if (copy == null || edit == null || !detachedWritable(backend)) return false;
+        entry.busy++; entry.version++;
+        service.updateDetached(entry.placement, copy.dataset().id(), copy.dataset().generation(), edit).whenComplete((result, failure) -> later(() -> {
+            entry.busy--; publish(entry, result, failure);
+            StoreStatus status = failure != null || result == null ? StoreStatus.IO_FAILURE : result.status();
+            if (status != StoreStatus.OK) reload(entry, null);
+            after.accept(status);
+        }));
+        return true;
+    }
+    java.nio.file.Path detachedExport(SharedWorkBackend backend, RegionWorkDataset dataset) {
+        var entry = backend.entry(); return entry == null ? null : service.detachedExport(entry.placement, dataset);
+    }
+    /** A refused write must not leave the last confirmed archive marked CONFLICT; re-read it. */
+    private void reload(Entry entry, String reason) {
+        complete(entry, service.load(entry.placement), loaded -> setReason(entry, reason));
     }
     private static SharedCommand.Intent wire(TaskCommand intent) {
         return switch (intent) {
@@ -374,7 +512,21 @@ public final class SharedWorkController {
                 || (!request.capture().materials().isEmpty() && !request.capture().materials().equals(snapshot.manifest().definition().materials()))) {
                 setReason(entry, "definitions_mismatch"); continue;
             }
-            if (request.select()) {
+            if (request.rejoin()) {
+                var kind = request.backend().kind();
+                loadLocal(request.backend(), local -> {
+                    var copy = detached(entry, kind);
+                    if (copy == null || reference(entry, kind) != null || !copy.from().equals(snapshot.scope()) || !request.actor().equals(actor())) {
+                        setReason(entry, "selection_changed"); return;
+                    }
+                    // Export first, then the fresh server snapshot replaces the copy; nothing is merged (I5).
+                    complete(entry, service.rejoin(entry.placement, copy.dataset().id(), copy.dataset().generation(), local, request.actor(),
+                        snapshot, snapshot.projectRevision()), result -> {
+                        if (result.ok()) validate(entry, kind, request.capture().source(), request.digest(), request.listener());
+                        else reload(entry, "unshare.state_changed");
+                    });
+                });
+            } else if (request.select()) {
                 loadLocal(request.backend(), local -> {
                     if (!Objects.equals(request.previous(), reference(entry, request.backend().kind())) || !request.actor().equals(actor())) {
                         setReason(entry, "selection_changed"); return;
@@ -437,6 +589,7 @@ public final class SharedWorkController {
             replay(entry, state, actor);
             if (!state.synchronizedState() || state.snapshot() == null || entry.storage != StoreStatus.OK) continue;
             for (var kind : DatasetKind.values()) {
+                // A detached copy has no reference and never receives server rows (#11 I5).
                 var binding = entry.binding(kind); var ref = binding.shared();
                 if (ref == null || !ref.actor().equals(actor) || !ref.scope().equals(state.scope()) || entry.hidden.contains(ref.scope())
                     || !verified.containsKey(ref.bindingId()) || entry.caching.contains(kind)
@@ -500,6 +653,7 @@ public final class SharedWorkController {
         if (state.status() != SharedClientState.Status.AVAILABLE || target == null || !actor.equals(subscribedActor)
             || !state.capabilities().worldNamespace().equals(target.worldNamespace())) { restored = listener; return; }
         for (Entry entry : entries.values()) for (var kind : DatasetKind.values()) {
+            // ref == null also covers a detached copy: reconnect never rejoins it; only Rejoin shared regions does (#11).
             var held = entry.backends.get(kind); var backend = held == null ? null : held.get(); var ref = reference(entry, kind);
             if (backend == null || ref == null || !ref.actor().equals(actor) || !ref.scope().equals(target)) continue;
             // Wait for this entry to settle; reopening its screen supplies a fresh backend if this one is gone.

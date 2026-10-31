@@ -1,7 +1,9 @@
 package dev.mcmateriallist.core.shared.client;
 
 import dev.mcmateriallist.core.LocalPlacementId;
+import dev.mcmateriallist.core.persistence.DatasetJsonCodec;
 import dev.mcmateriallist.core.persistence.StoreStatus;
+import dev.mcmateriallist.core.work.RegionWorkDataset;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 import java.io.*;
@@ -14,15 +16,22 @@ import java.util.*;
 
 /** Synchronous boundary; the lifecycle-owned service invokes this off the client thread. */
 public final class SharedClientStore {
-    public static final int SCHEMA = 2;
+    /** 3 adds the detached region copy (#11); 1 and 2 are still read and are rewritten as 3 on the next save. */
+    public static final int SCHEMA = 3;
     public static final int MAX_JSON_BYTES = ((SharedClientCodec.MAX_BYTES + 2) / 3) * 4 + 128;
     public record Result(StoreStatus status, SharedClientArchive value) {
         public boolean ok() { return status == StoreStatus.OK; }
         static Result failure(StoreStatus status) { return new Result(status, null); }
     }
     private final Path root;
-    public SharedClientStore(Path configuredConfigRoot) {
+    private final WriteHook hook;
+    /** Failure injection before each atomic move, mirroring LocalDatasetStore. */
+    enum WriteStage { BEFORE_EXPORT_REPLACE, BEFORE_BACKUP_REPLACE, BEFORE_PRIMARY_REPLACE }
+    @FunctionalInterface interface WriteHook { void before(WriteStage stage) throws IOException; }
+    public SharedClientStore(Path configuredConfigRoot) { this(configuredConfigRoot, stage -> {}); }
+    SharedClientStore(Path configuredConfigRoot, WriteHook hook) {
         root = Objects.requireNonNull(configuredConfigRoot).toAbsolutePath().normalize().resolve("shared-client");
+        this.hook = Objects.requireNonNull(hook);
     }
     public Result load(LocalPlacementId placement) {
         try {
@@ -35,7 +44,12 @@ public final class SharedClientStore {
             return primary.status() == StoreStatus.MISSING && previous.status() != StoreStatus.MISSING ? previous : primary;
         } catch (IOException | IllegalArgumentException failure) { return failure(failure); }
     }
-    public Result save(SharedClientArchive archive, long expectedGeneration) {
+    public Result save(SharedClientArchive archive, long expectedGeneration) { return save(archive, expectedGeneration, null); }
+    /**
+     * With export, the current regions binding must hold exactly that detached copy; it is written to its export file
+     * under this lock before the archive. A failure between the two leaves the copy DETACHED; a retry rewrites the same bytes.
+     */
+    Result save(SharedClientArchive archive, long expectedGeneration, RegionWorkDataset export) {
         Path file = file(archive.placement());
         try {
             directories(root); Path lock = file.resolveSibling(file.getFileName() + ".lock"); guard(lock, false);
@@ -50,12 +64,22 @@ public final class SharedClientStore {
                     Result previous = read(backup(file), archive.placement());
                     if (!previous.ok() && previous.status() != StoreStatus.MISSING) return previous;
                 } else if (expectedGeneration != -1 || archive.generation() != 0) return Result.failure(StoreStatus.CONFLICT);
+                if (export != null && (!current.ok() || current.value().regions().detached() == null
+                    || !current.value().regions().detached().dataset().equals(export))) return Result.failure(StoreStatus.CONFLICT);
                 String json = encode(archive);
                 if (!archive.equals(parse(json, archive.placement()).value())) return Result.failure(StoreStatus.CORRUPT);
+                if (export != null) {
+                    Path target = export(archive.placement(), export); directories(target.getParent());
+                    String text = new DatasetJsonCodec().encode(export);
+                    replace(target, text, WriteStage.BEFORE_EXPORT_REPLACE, written -> {
+                        try { return export.equals(new DatasetJsonCodec().decode(written)); }
+                        catch (RuntimeException invalid) { return false; }
+                    });
+                }
                 // Derived private snapshots need not survive permission removal in a previous-good backup.
-                // Preserve the exact prior binding/journal generation; recovery always needs a live snapshot.
-                if (current.ok()) replace(backup(file), encode(withoutCaches(current.value())), archive.placement());
-                replace(file, json, archive.placement());
+                // Preserve the exact prior binding/journal generation and any detached copy; recovery always needs a live snapshot.
+                if (current.ok()) replace(backup(file), encode(withoutCaches(current.value())), archive.placement(), WriteStage.BEFORE_BACKUP_REPLACE);
+                replace(file, json, archive.placement(), WriteStage.BEFORE_PRIMARY_REPLACE);
                 return new Result(StoreStatus.OK, archive);
             }
         } catch (IOException | IllegalArgumentException | ArithmeticException | OverlappingFileLockException failure) { return failure(failure); }
@@ -86,15 +110,13 @@ public final class SharedClientStore {
                         output.force(true);
                     }
                 }
-                replace(file, encode(restored), placement); return new Result(StoreStatus.OK, restored);
+                replace(file, encode(restored), placement, WriteStage.BEFORE_PRIMARY_REPLACE); return new Result(StoreStatus.OK, restored);
             }
         } catch (IOException | IllegalArgumentException | ArithmeticException | OverlappingFileLockException failure) { return failure(failure); }
     }
     private static SharedClientArchive withoutCaches(SharedClientArchive archive) {
-        var material = archive.materials(); var region = archive.regions();
-        return new SharedClientArchive(archive.generation(), archive.placement(),
-            new SharedClientArchive.Binding(material.localDataset(), material.shared(), null),
-            new SharedClientArchive.Binding(region.localDataset(), region.shared(), null), archive.operations(), archive.recoveredJournalUncertain());
+        return new SharedClientArchive(archive.generation(), archive.placement(), archive.materials().withCache(null),
+            archive.regions().withCache(null), archive.operations(), archive.recoveredJournalUncertain());
     }
     private Result read(Path file, LocalPlacementId placement) throws IOException {
         guard(file, false);
@@ -121,7 +143,7 @@ public final class SharedClientStore {
             reader.endObject(); if (reader.peek() != JsonToken.END_DOCUMENT) return Result.failure(StoreStatus.CORRUPT);
             if (payload == null) return Result.failure(StoreStatus.CORRUPT);
             byte[] bytes = Base64.getDecoder().decode(payload);
-            var archive = version == 1 ? SharedClientCodec.decodeLegacy(bytes) : SharedClientCodec.decode(bytes);
+            var archive = SharedClientCodec.decode(bytes, version);
             return archive.placement().equals(placement) ? new Result(StoreStatus.OK, archive) : Result.failure(StoreStatus.CORRUPT);
         } catch (IOException | IllegalArgumentException | IllegalStateException invalid) { return Result.failure(StoreStatus.CORRUPT); }
     }
@@ -135,7 +157,10 @@ public final class SharedClientStore {
             return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
         }
     }
-    private static void replace(Path target, String json, LocalPlacementId placement) throws IOException {
+    private void replace(Path target, String json, LocalPlacementId placement, WriteStage stage) throws IOException {
+        replace(target, json, stage, written -> parse(written, placement).ok());
+    }
+    private void replace(Path target, String json, WriteStage stage, java.util.function.Predicate<String> verify) throws IOException {
         guard(target, false);
         Path temporary = Files.createTempFile(target.getParent(), "shared-", ".tmp");
         try {
@@ -143,11 +168,20 @@ public final class SharedClientStore {
                 ByteBuffer bytes = ByteBuffer.wrap(json.getBytes(StandardCharsets.UTF_8));
                 while (bytes.hasRemaining()) channel.write(bytes); channel.force(true);
             }
-            if (!parse(readText(temporary), placement).ok()) throw new IOException("Client shared replacement verification failed");
-            guard(target, false); Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            if (!verify.test(readText(temporary))) throw new IOException("Client shared replacement verification failed");
+            hook.before(stage); guard(target, false);
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } finally { Files.deleteIfExists(temporary); }
     }
     private Path file(LocalPlacementId placement) { return root.resolve("placement-" + Objects.requireNonNull(placement) + ".json"); }
+    /** The rejoin export of a detached copy; only canonical UUIDs and a decimal generation ever form the name. */
+    Path export(LocalPlacementId placement, RegionWorkDataset dataset) {
+        if (!dataset.placementId().equals(placement)) throw new IllegalArgumentException("Export placement mismatch");
+        String name = "placement-" + placement.value() + "-dataset-" + dataset.id().value() + "-g" + dataset.generation() + ".json";
+        if (!name.matches("placement-[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}-dataset-[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}-g(0|[1-9][0-9]{0,18})\\.json"))
+            throw new IllegalArgumentException("Non-canonical export name");
+        return root.resolve("detached").resolve(name);
+    }
     private static Path backup(Path file) { return file.resolveSibling(file.getFileName() + ".bak"); }
     private static void directories(Path directory) throws IOException {
         guard(directory, true); Path cursor = directory.getRoot();

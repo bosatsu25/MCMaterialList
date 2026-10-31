@@ -233,6 +233,8 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             check(Arrays.equals(localBytes, Files.readAllBytes(localFile)), "Shared flow rewrote original local file bytes");
             check(Arrays.equals(schematic, Files.readAllBytes(placement.getSchematicFile())), "Shared flow changed source schematic bytes");
           }
+          // Issue #11 on its own fixture and connections, before closed admission leaves an unknown original behind.
+          SharedUiUnshareChecks.run(context, server);
           if (SharedUiRaceChecks.enabled("admission")) SharedUiRaceChecks.closedAdmission(context, server);
         }
         SharedSourceLoading.shutdown();
@@ -423,7 +425,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         context.waitFor(client -> english.isDone(), 600); english.join(); context.setScreen(() -> materialScreen);
         context.waitFor(client -> client.gui.overlay() == null);
     }
-    private static void geometry(GuiBase screen) {
+    static void geometry(GuiBase screen) {
         var controls = ((GuiButtonsAccess) screen).mcmateriallist$buttons();
         var added = screen instanceof SharedWorkScreen || screen instanceof SharedInputScreen || screen instanceof SharedMembershipScreen ? controls
             : controls.stream().filter(button -> button.getHoverStrings().contains(SharedWorkBackend.text("title"))).toList();
@@ -663,7 +665,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             && !regions.pending(), 600);
         back(context);
     }
-    private static boolean hasButton(GuiBase screen, String label) {
+    static boolean hasButton(GuiBase screen, String label) {
         return ((GuiButtonsAccess) screen).mcmateriallist$buttons().stream()
             .anyMatch(button -> label.equals(ChatFormatting.stripFormatting(((SharedUiAccess.Button) button).label())));
     }
@@ -782,7 +784,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
         context.runOnClient(client -> check(!((SharedUiAccess.Button) button((GuiBase) client.gui.screen(), "New project...")).enabled(), "Unsupported server left native shared create enabled"));
         action(context, "Use local work"); context.waitFor(client -> !work.shared().selected() && work.writable(), 600); back(context);
     }
-    private static void capture(ClientGameTestContext context, GuiBase screen, String name) {
+    static void capture(ClientGameTestContext context, GuiBase screen, String name) {
         context.runOnClient(client -> {
             client.gui.toastManager().clear(); client.gui.hud.getChat().clearMessages(true);
             ((SharedUiAccess.Messages) ((SharedUiAccess.Screen) screen).messages()).messages().clear();
@@ -815,7 +817,7 @@ public final class SharedUiClientTest implements FabricClientGameTest {
             .findFirst().orElseThrow(() -> new AssertionError("Missing native material row"));
         return ((SharedUiAccess.Children) row).children().stream().filter(type::isInstance).map(widget -> (ButtonBase) widget).findFirst().orElseThrow();
     }
-    private static ButtonBase regionButton(GuiPlacementConfiguration screen, String name, Class<? extends ButtonBase> type) {
+    static ButtonBase regionButton(GuiPlacementConfiguration screen, String name, Class<? extends ButtonBase> type) {
         var row = ((SharedUiAccess.Rows) ((SharedUiAccess.ListScreen) screen).list()).rows().stream()
             .filter(candidate -> candidate.getEntry() instanceof fi.dy.masa.litematica.schematic.placement.SubRegionPlacement region && region.getName().equals(name))
             .findFirst().orElseThrow(() -> new AssertionError("Missing native region row"));

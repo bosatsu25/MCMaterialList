@@ -2,10 +2,15 @@ package dev.mcmateriallist.fabric.test;
 
 import static dev.mcmateriallist.core.shared.SharedEvents.Status.*;
 
+import dev.mcmateriallist.core.LocalPlacementId;
 import dev.mcmateriallist.core.location.ContainerPosition;
 import dev.mcmateriallist.core.location.LocationProfile;
 import dev.mcmateriallist.core.location.LocationProfileId;
+import dev.mcmateriallist.core.persistence.DatasetJsonCodec;
 import dev.mcmateriallist.core.shared.*;
+import dev.mcmateriallist.core.shared.client.SharedClientArchive;
+import dev.mcmateriallist.core.shared.client.SharedClientService;
+import dev.mcmateriallist.core.shared.client.SharedClientStore;
 import dev.mcmateriallist.core.shared.protocol.SharedMessage;
 import dev.mcmateriallist.core.shared.protocol.SharedProtocol;
 import dev.mcmateriallist.core.shared.protocol.SharedTransfers;
@@ -133,6 +138,7 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
         mark("alpha-manifest", Long.toString(refreshed.manifest().version()));
         awaitFile("beta-refetched");
         stockAlpha(scope);
+        unshareAlpha(scope);
 
         // AC-14: a Viewer's direct edit is refused by the authority and changes nothing.
         membership(scope, beta, ProjectRole.VIEWER);
@@ -237,6 +243,7 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
             "Re-fetched definition or work did not match the authority");
         mark("beta-refetched", "");
         stockBetaMember(scope);
+        unshareBeta(scope);
 
         awaitFile("alpha-viewer");
         until("membership invalidation", client -> SharedClientNetworking.state().status() == SharedClientState.Status.RESYNC_REQUIRED);
@@ -357,6 +364,132 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
             check(footer != null && footer.text().contains(StockSession.text("fallback")), "Fallback footer lacks the limited-scope label: " + footer);
         });
         LOG.info("Multiplayer beta stock fallback OBSERVED PASS");
+    }
+    /**
+     * Issue #11, alpha: beta's unshare and its detached local edit never reach the authority (fingerprint and revision
+     * unchanged); alpha's own region edit while beta is detached is accepted normally and never reaches beta's copy.
+     */
+    private void unshareAlpha(ProjectScope scope) {
+        awaitFile("beta-unshare-ready");
+        String before = fingerprint(join(scope));
+        mark("alpha-unshare-before", before);
+        awaitFile("beta-detached-edit");
+        var during = join(scope);
+        check(before.equals(fingerprint(during)), "Beta's unshare or detached local edit changed the authority");
+        var region = during.manifest().regions().keySet().iterator().next();
+        Sent note = submit(region, new SharedCommand.SetNote("alpha region note"));
+        check(note.result().status() == OK && note.result().projectRevision() == during.projectRevision() + 1,
+            "Alpha region edit while beta is detached failed: " + note.result());
+        mark("alpha-unshare-edit", Long.toString(note.result().projectRevision()));
+        awaitFile("beta-unshare-done");
+        check(fingerprint(join(scope)).equals(fingerprint(snapshot())) && snapshot().projectRevision() == note.result().projectRevision(),
+            "Beta's rejoin changed the authority");
+        LOG.info("Multiplayer alpha unshare unaffected PASS");
+    }
+    /**
+     * Issue #11, beta with a real SharedClientService journal: a dropped ACK keeps Unshare refused (P3), also across a
+     * disconnect; reconnect, exact replay and resolve allow it once the cache holds the outcome (P5). The detached copy
+     * then takes a local edit that stays local, alpha's edit never reaches it, and rejoin installs the server authority
+     * while the export holds beta's local edit.
+     */
+    private void unshareBeta(ProjectScope scope) {
+        Path root;
+        try { root = Files.createTempDirectory("mcmateriallist-unshare-"); }
+        catch (IOException failure) { throw new UncheckedIOException(failure); }
+        var service = new SharedClientService(root);
+        try {
+            var placement = LocalPlacementId.create();
+            var joined = join(scope);
+            var selected = stored(service.select(placement, DatasetKind.REGIONS, null, actor, joined, joined.projectRevision()));
+            var ref = selected.regions().shared();
+            var region = joined.manifest().regions().keySet().iterator().next();
+            var done = new SharedCommand(scope, region, UUID.randomUUID(), joined.rows().get(region).rowVersion(), joined.manifest().version(),
+                new SharedCommand.SetDone(true));
+            SharedClientNetworking.DurableAdmission journal = (admission, value) -> service.admit(placement, DatasetKind.REGIONS, ref,
+                admission.actor(), admission.connectionId(), value).thenApply(SharedClientStore.Result::ok);
+            MultiplayerFaults.dropResult(done.operationId());
+            var sent = context.computeOnClient(client -> SharedClientNetworking.submit(done, journal)).toCompletableFuture();
+            until("durable region admission", client -> sent.isDone());
+            check(sent.join(), "Region command was not durably admitted");
+            until("own region delta despite dropped ACK", client -> { var row = row(region); return row != null && row.done() && actor.equals(row.assignee()); });
+            until("region ACK dropped", client -> MultiplayerFaults.dropped(done.operationId()));
+            var live = snapshot();
+            long executed = live.projectRevision();
+            // Even with the cache at the live cursor, the unconfirmed original blocks unshare and nothing is written.
+            stored(service.cache(placement, DatasetKind.REGIONS, ref, live, executed));
+            var held = stored(service.load(placement));
+            var blocked = SharedClientService.unshareCheck(held, actor, executed);
+            check(blocked.reason() == SharedClientService.UnshareReason.UNRESOLVED_OPERATIONS && blocked.unresolved() == 1,
+                "Dropped region ACK did not block unshare: " + blocked);
+            refusedUnshare(service, placement, ref, executed, held);
+            disconnect();
+            check(SharedClientService.unshareCheck(stored(service.load(placement)), actor, -1).reason()
+                == SharedClientService.UnshareReason.UNRESOLVED_OPERATIONS, "A disconnect resolved the region original");
+            refusedUnshare(service, placement, ref, executed, held);
+            connect(1);
+            var resynced = join(scope);
+            check(SharedClientService.unshareCheck(stored(service.load(placement)), actor, cursor()).reason()
+                == SharedClientService.UnshareReason.UNRESOLVED_OPERATIONS, "Reconnect alone resolved the region original");
+            var settled = replay(done);
+            check(settled.status() == OK && settled.projectRevision() == executed && settled.row().done(),
+                "Region replay did not return the original outcome: " + settled);
+            stored(service.resolve(placement, actor, settled));
+            stored(service.cache(placement, DatasetKind.REGIONS, ref, resynced, resynced.projectRevision()));
+            check(cursor() == resynced.projectRevision(), "Region replay executed the operation again");
+            var resolved = stored(service.load(placement));
+            check(SharedClientService.unshareCheck(resolved, actor, cursor()).allowed(), "Resolved and cached region original still blocks unshare");
+            LOG.info("Multiplayer beta unshare blocked until replay PASS");
+
+            mark("beta-unshare-ready", "");
+            String before = awaitFile("alpha-unshare-before");
+            check(before.equals(fingerprint(resynced)), "Beta view diverged from alpha before unshare");
+            var newId = DatasetId.create();
+            var detached = stored(service.unshare(placement, ref, resynced.projectRevision(), actor, newId));
+            var copy = detached.regions().detached();
+            check(copy != null && copy.dataset().id().equals(newId) && copy.from().equals(scope) && detached.regions().shared() == null
+                && copy.dataset().states().get(region).equals(resynced.rows().get(region))
+                && detached.materials().equals(resolved.materials()) && detached.operations().equals(resolved.operations()),
+                "Unshare did not make an exact local copy with materials and journal unchanged");
+            var outcome = new java.util.concurrent.atomic.AtomicReference<TransitionResult>();
+            var time = java.time.Instant.now();
+            var edited = stored(service.updateDetached(placement, newId, copy.dataset().generation(), dataset -> {
+                var mutation = dataset.apply(region, new TaskCommand.SetDone(false), actor, time); outcome.set(mutation.result()); return mutation.dataset();
+            })).regions().detached().dataset();
+            check(outcome.get() instanceof TransitionResult.Changed && !edited.states().get(region).done(), "Detached local Done did not change the copy");
+            check(snapshot().rows().get(region).done() && cursor() == resynced.projectRevision(), "Detached local edit reached the shared view");
+            mark("beta-detached-edit", "");
+            long alphaEdit = Long.parseLong(awaitFile("alpha-unshare-edit"));
+            until("alpha region delta on the transport", client -> { var row = row(region); return row != null && "alpha region note".equals(row.note()); });
+            check(cursor() == alphaEdit, "Unexpected revision while detached");
+            var untouched = stored(service.load(placement));
+            check(untouched.regions().detached() != null && untouched.regions().detached().dataset().equals(edited),
+                "A shared change reached the detached copy");
+
+            var fresh = join(scope);
+            var rejoined = stored(service.rejoin(placement, newId, edited.generation(), null, actor, fresh, fresh.projectRevision()));
+            check(rejoined.regions().detached() == null && rejoined.regions().shared() != null && !rejoined.regions().shared().equals(ref)
+                && rejoined.regions().cache().snapshot().equals(fresh) && rejoined.regions().cache().snapshot().rows().get(region).done()
+                && "alpha region note".equals(rejoined.regions().cache().snapshot().rows().get(region).note()),
+                "Rejoin did not install the server authority");
+            Path export = service.detachedExport(placement, edited);
+            try {
+                check(Files.exists(export) && edited.equals(new DatasetJsonCodec().decode(Files.readString(export, StandardCharsets.UTF_8))),
+                    "Rejoin export does not hold beta's detached local edit");
+            } catch (IOException failure) { throw new UncheckedIOException(failure); }
+            LOG.info("Multiplayer beta unshare rejoin authority PASS");
+            mark("beta-unshare-done", "");
+        } finally { service.close(); }
+    }
+    private static void refusedUnshare(SharedClientService service, LocalPlacementId placement, SharedClientArchive.Reference ref,
+            long cursor, SharedClientArchive expected) {
+        var refused = service.unshare(placement, ref, cursor, ref.actor(), DatasetId.create()).orTimeout(30, java.util.concurrent.TimeUnit.SECONDS).join();
+        check(refused.status() == dev.mcmateriallist.core.persistence.StoreStatus.CONFLICT && expected.equals(stored(service.load(placement))),
+            "Blocked unshare was not refused without change: " + refused.status());
+    }
+    private static SharedClientArchive stored(CompletableFuture<SharedClientStore.Result> future) {
+        var result = future.orTimeout(30, java.util.concurrent.TimeUnit.SECONDS).join();
+        check(result.ok(), "Client shared store refused: " + result.status());
+        return result.value();
     }
     private List<StockMessage> stockScan(ProjectScope binding, BlockPos chest) {
         var replies = new ConcurrentLinkedQueue<StockMessage>();

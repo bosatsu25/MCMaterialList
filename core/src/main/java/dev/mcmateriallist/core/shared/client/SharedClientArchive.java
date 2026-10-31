@@ -18,12 +18,31 @@ public record SharedClientArchive(long generation, LocalPlacementId placement,
             if (cursor < 0 || cursor != snapshot.projectRevision()) throw new IllegalArgumentException("Invalid contiguous cache cursor");
         }
     }
-    /** localDataset always refers to the original local store, never to a shared list ID. */
-    public record Binding(DatasetId localDataset, Reference shared, Cache cache) {
+    /**
+     * A purely local region copy made from a synchronized shared snapshot (#11). It never merges back: rejoin exports it
+     * and installs a fresh server snapshot. Its ID is neither the original local dataset nor the shared region list.
+     */
+    public record Detached(RegionWorkDataset dataset, ProjectScope from) {
+        public Detached {
+            Objects.requireNonNull(dataset); Objects.requireNonNull(from);
+            if (dataset.id().value().equals(from.regionListId())) throw new IllegalArgumentException("Detached copy reuses the shared list identity");
+        }
+    }
+    /**
+     * localDataset always refers to the original local store, never to a shared list ID. Exactly one state (I1):
+     * SHARED (shared, optional cache), DETACHED (detached only) or ORIGINAL (neither).
+     */
+    public record Binding(DatasetId localDataset, Reference shared, Cache cache, Detached detached) {
         public Binding {
             if (cache != null && (shared == null || !shared.scope().equals(cache.snapshot().scope())
                 || !cache.snapshot().canRead(shared.actor()))) throw new IllegalArgumentException("Invalid private cache binding");
+            if (detached != null && (shared != null || cache != null || detached.dataset().id().equals(localDataset)))
+                throw new IllegalArgumentException("Invalid detached binding");
         }
+        public Binding(DatasetId localDataset, Reference shared, Cache cache) { this(localDataset, shared, cache, null); }
+        public boolean isDetached() { return detached != null; }
+        /** Every cache rebuild goes through here so no other field (notably a detached copy) is ever dropped. */
+        public Binding withCache(Cache next) { return new Binding(localDataset, shared, next, detached); }
     }
     public record Confirmation(SharedEvents.Status status, long projectRevision) {
         public Confirmation {
@@ -42,6 +61,8 @@ public record SharedClientArchive(long generation, LocalPlacementId placement,
     public SharedClientArchive {
         if (generation < 0) throw new IllegalArgumentException("Invalid client generation");
         Objects.requireNonNull(placement); Objects.requireNonNull(materials); Objects.requireNonNull(regions);
+        if (materials.detached() != null || (regions.detached() != null && !regions.detached().dataset().placementId().equals(placement)))
+            throw new IllegalArgumentException("Invalid detached placement or kind");
         operations = List.copyOf(operations);
         if (operations.size() > MAX_OPERATIONS || operations.stream().map(operation -> operation.command().operationId()).distinct().count() != operations.size())
             throw new IllegalArgumentException("Invalid client journal capacity or identity");
