@@ -13,6 +13,7 @@ import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.button.ButtonGeneric;
 import fi.dy.masa.malilib.render.GuiContext;
 import java.util.List;
+import net.minecraft.client.Minecraft;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -29,6 +30,8 @@ public final class StockDetailScreen extends GuiBase {
     private UUID pending;
     private int page;
     private boolean listed;
+    /** The scanning state the Check again / Cancel button was built for; a change rebuilds it so the label matches its action. */
+    private boolean scanningShown, rebuildQueued;
 
     public StockDetailScreen(GuiBase parent, StockSession session) {
         this.session = session; setParent(parent); title = StockSession.text("detail_title");
@@ -42,7 +45,8 @@ public final class StockDetailScreen extends GuiBase {
         LocationProfile profile = session.profile();
         if (!listed && profile != null && profile.binding() != null) { listed = true; grantRequest(profile, List.of(), false); }
         int width = Math.min(150, (getScreenWidth() - 28) / 2);
-        add(12, 54, width, StockSession.text(StockClient.scanning() ? "cancel" : "check_again"), session::enabled, () -> { session.click(); initGui(); });
+        scanningShown = StockClient.scanning();
+        add(12, 54, width, StockSession.text(scanningShown ? "cancel" : "check_again"), session::enabled, () -> { session.click(); initGui(); });
         if (admin(profile)) add(16 + width, 54, width, StockSession.text("grant_all"), () -> pending == null,
             () -> grantRequest(profile, profile.positions(), false));
         StockSnapshot snapshot = session.snapshot().orElse(null);
@@ -91,6 +95,10 @@ public final class StockDetailScreen extends GuiBase {
     private static String describe(ContainerPosition position) { return StockSession.text("position", position.x(), position.y(), position.z(), position.blockId()); }
 
     @Override protected void drawContents(GuiContext ctx, int mouseX, int mouseY, float ticks) {
+        if (!rebuildQueued && StockClient.scanning() != scanningShown) {
+            rebuildQueued = true;
+            Minecraft.getInstance().schedule(() -> { rebuildQueued = false; if (Minecraft.getInstance().gui.screen() == this) initGui(); });
+        }
         super.drawContents(ctx, mouseX, mouseY, ticks);
         int width = getScreenWidth() - 24;
         var line = session.footer();

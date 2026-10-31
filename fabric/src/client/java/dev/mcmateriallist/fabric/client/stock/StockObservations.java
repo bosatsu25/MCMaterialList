@@ -86,7 +86,8 @@ public final class StockObservations {
         for (int i = 0; i < target.slots(); i++) add(counts, current.slots.get(i).getItem());
         if (!LocationReport.validCounts(counts)) return;
         // Readings of either half (e.g. from before two single chests were joined) are superseded by this one.
-        observed.keySet().removeIf(key -> target.halves().stream().anyMatch(half -> same(half, key)));
+        // Compare recorded halves, not just keys: a broken double chest leaves a combined reading keyed by the removed half.
+        observed.keySet().removeIf(key -> halves.getOrDefault(key, List.of(key)).stream().anyMatch(old -> target.halves().stream().anyMatch(half -> same(half, old))));
         halves.keySet().removeIf(key -> !observed.containsKey(key));
         while (observed.size() >= StockLimits.MAX_POSITIONS) { var eldest = observed.keySet().iterator().next(); observed.remove(eldest); halves.remove(eldest); }
         observed.put(target.position(), new Observation(target.world(), target.dimension(), target.position(), Map.copyOf(counts), Instant.now()));
