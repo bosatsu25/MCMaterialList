@@ -59,7 +59,7 @@ class SharedLegacyMigrationTest {
         assertEquals(dev.mcmateriallist.core.persistence.StoreStatus.CONFLICT, store.save(next, 13).status());
         assertArrayEquals(upgraded, Files.readAllBytes(project));
         var nextClient = new SharedClientArchive(22, c.placement(), c.materials(), c.regions(), c.operations());
-        assertTrue(clients.save(nextClient, 21).ok()); assertTrue(Files.readString(client).startsWith("{\"schema\":2,"));
+        assertTrue(clients.save(nextClient, 21).ok()); assertTrue(Files.readString(client).startsWith("{\"schema\":" + SharedClientStore.SCHEMA + ","));
         assertEquals(nextClient, new SharedClientStore(root).load(c.placement()).value());
         assertArrayEquals(worldBytes, Files.readAllBytes(world));
     }
