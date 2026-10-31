@@ -75,4 +75,26 @@ public final class SharedWorkBackend {
     public void membership(UUID target, ProjectRole role) { controller.membership(this, target, role); }
     public void updateDefinition() { controller.updateDefinition(this); }
     public void viewer(UUID target, boolean granted) { controller.viewer(this, target, granted); }
+    // Issue #11: REGIONS-only detached local copy.
+    /** The detached local region copy, or null when this list is shared or original local work. */
+    public SharedClientArchive.Detached detached() { return SharedWorkController.detached(entry, kind); }
+    /** Sharing metadata cannot be read, so original local region editing is blocked (a detached copy might be hidden). */
+    public boolean metadataBlocked() { return SharedWorkController.metadataBlocked(entry); }
+    public boolean canUnshare() { return controller.unshareReason(this) == null; }
+    public boolean canRejoin() { return controller.rejoinReason(this) == null; }
+    /** Null when Unshare regions is allowed; otherwise the translated reason. */
+    public String unshareFeedback() {
+        String reason = controller.unshareReason(this);
+        return reason == null ? null : reason.equals("unshare.unresolved_operations") ? text(reason, controller.unresolved(this)) : text(reason);
+    }
+    public String rejoinFeedback() { String reason = controller.rejoinReason(this); return reason == null ? null : text(reason); }
+    public void unshare() { controller.unshare(this); }
+    public void rejoin() { controller.rejoin(this); }
+    public boolean detachedWritable() { return controller.detachedWritable(this); }
+    /** Pure edit of the detached copy on the store queue; false when not submitted (after is then never called). */
+    public boolean updateDetached(java.util.function.UnaryOperator<RegionWorkDataset> edit, java.util.function.Consumer<StoreStatus> after) {
+        return controller.updateDetached(this, edit, after);
+    }
+    /** Where Rejoin writes (or wrote) this copy; never read back by the application. */
+    public java.nio.file.Path detachedExport(RegionWorkDataset dataset) { return controller.detachedExport(this, dataset); }
 }

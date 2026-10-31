@@ -53,6 +53,6 @@ tasks.register('verifyPhase3') {
 }
 tasks.register('verifyPhase4') {
     group = 'verification'
-    description = 'Run every retained Phase 0-3 gate plus Phase 4A Location Files (real UI registration, cross-dimension refusal, fresh-process persistence) and Phase 4B Check Materials (server scan, authorization, fallback, budget).'
-    dependsOn 'verifyPhase3', ':fabric:verifyLocationFiles', ':fabric:verifyStockScan'
+    description = 'Run every retained Phase 0-3 gate plus Phase 4A Location Files (real UI registration, cross-dimension refusal, fresh-process persistence) and Phase 4B Check Materials (server scan, authorization, fallback, budget) and Phase 4C Unshare regions (detached copy, replay gate, rejoin export).'
+    dependsOn 'verifyPhase3', ':fabric:verifyLocationFiles', ':fabric:verifyStockScan', ':fabric:verifyUnshare'
 }

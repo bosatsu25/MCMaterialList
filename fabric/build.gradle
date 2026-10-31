@@ -116,6 +116,33 @@ tasks.register('verifyStockScan') {
     }
 }
 
+// Issue #11: Unshare regions must have passed in the native shared UI run (held result, detached Done, rejoin export,
+// geometry at GUI scales 1-4, narrow and Japanese) and in both multiplayer clients (real SharedClientService on beta).
+tasks.register('verifyUnshare') {
+    group = 'verification'
+    description = 'Require Phase 4C Unshare regions evidence from the native shared UI run and the two-client dedicated-server harness.'
+    dependsOn 'runSharedUiTest', 'verifyMultiplayer'
+    doLast {
+        def log = layout.buildDirectory.file('run/sharedUiTest/logs/latest.log').get().asFile
+        def started = tasks.named('runSharedUiTest').get().ext.sharedUiStartedMillis
+        if (!log.exists() || log.lastModified() < started || !log.text.contains('Shared native UI unshare PASS')
+            || log.text.contains('Client gametests failed with an exception')) {
+            throw new GradleException('Phase 4C Unshare regions did not pass in the current shared UI run; inspect the shared UI log.')
+        }
+        def consoles = layout.buildDirectory.dir('run/multiplayer/consoles').get().asFile
+        def required = [
+            alpha: ['Multiplayer alpha unshare unaffected PASS'],
+            beta: ['Multiplayer beta unshare blocked until replay PASS', 'Multiplayer beta unshare rejoin authority PASS']
+        ]
+        required.each { role, markers ->
+            def console = new File(consoles, role + '.log')
+            if (!console.exists()) throw new GradleException("Multiplayer ${role} console log is missing.")
+            def text = console.text
+            markers.each { marker -> if (!text.contains(marker)) throw new GradleException("Multiplayer ${role} did not reach: ${marker}") }
+        }
+    }
+}
+
 sourceSets {
     serverSmoke {
         compileClasspath += sourceSets.main.compileClasspath
