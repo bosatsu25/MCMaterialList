@@ -155,4 +155,14 @@ class StockLedgerTest {
         var snapshot = ledger.snapshot(world, profile).orElseThrow();
         assertEquals(5, snapshot.confirmed(STONE)); assertEquals(StockSnapshot.Previous.NONE, snapshot.previous(STONE));
     }
+
+    @Test void anOlderReplayedObservationNeverReplacesANewerReading() {
+        var ledger = new StockLedger(clock); ledger.begin(profile);
+        // Server reading of 20 at t+10; a fallback scan later replays an observation of 5 taken at t.
+        now[0] = start.plusSeconds(10); assertTrue(ledger.accept(checked(1, STONE, 20))); ledger.complete();
+        now[0] = start.plusSeconds(20); ledger.begin(profile);
+        assertTrue(ledger.accept(new LocationReport(1, LocationStatus.OBSERVED, ContainerKind.STORAGE, Map.of(STONE, 5L)), start));
+        ledger.complete();
+        assertEquals(20, ledger.snapshot(world, profile).orElseThrow().previous(STONE).count());
+    }
 }

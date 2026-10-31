@@ -56,7 +56,11 @@ public final class StockLedger {
         reports.put(report.index(), report);
         if (report.status().read()) {
             List<ContainerPosition> covered = halves == null || halves.isEmpty() ? List.of(position) : List.copyOf(halves);
-            readings.keySet().removeIf(key -> !key.equals(position) && spans.getOrDefault(key, List.of(key)).stream().anyMatch(old -> covers(covered, old)));
+            // Newer evidence always wins: an older cached observation replayed by fallback never replaces a later reading.
+            StockReading kept = readings.get(position);
+            if (kept != null && kept.at().isAfter(at)) return true;
+            readings.entrySet().removeIf(entry -> !entry.getKey().equals(position) && !entry.getValue().at().isAfter(at)
+                && spans.getOrDefault(entry.getKey(), List.of(entry.getKey())).stream().anyMatch(old -> covers(covered, old)));
             spans.keySet().retainAll(readings.keySet());
             readings.put(position, StockReading.of(report, at)); spans.put(position, covered);
         }
