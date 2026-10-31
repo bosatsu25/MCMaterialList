@@ -10,7 +10,6 @@ import dev.mcmateriallist.fabric.client.location.LookedAtContainer;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -25,9 +24,8 @@ import net.minecraft.world.item.ItemStack;
  * Location File and the menu's container slot count matches the block. Its contents are then OBSERVED at the time last seen.
  */
 public final class StockObservations {
-    /** halves are the block positions the reading covers: both halves of an observed double chest, else just position. */
-    public record Observation(WorldIdentity world, String dimension, ContainerPosition position, List<ContainerPosition> halves, Map<String, Long> counts, Instant at) {}
-    private record Open(WorldIdentity world, String dimension, ContainerPosition position, List<ContainerPosition> halves, int slots) {}
+    public record Observation(WorldIdentity world, String dimension, ContainerPosition position, Map<String, Long> counts, Instant at) {}
+    private record Open(WorldIdentity world, String dimension, ContainerPosition position, int slots) {}
     /** Observations are scoped by world and dimension: equal coordinates in another dimension are another container. */
     private record Key(WorldIdentity world, String dimension, int x, int y, int z) {
         static Key of(WorldIdentity world, String dimension, ContainerPosition at) { return new Key(world, dimension, at.x(), at.y(), at.z()); }
@@ -54,22 +52,8 @@ public final class StockObservations {
         Observation value = observed.get(Key.of(profile.world(), profile.dimension(), position));
         return value != null && value.position().blockId().equals(position.blockId()) ? value : null;
     }
-    /**
-     * True when position is the other half of a double chest observed under another position that is still registered in profile:
-     * its items are already in that counted observation, so this registration must not add them again (or an older reading).
-     */
-    public static boolean covered(LocationProfile profile, ContainerPosition position) {
-        for (Observation value : observed.values()) {
-            if (!value.world().equals(profile.world()) || !value.dimension().equals(profile.dimension()) || same(value.position(), position)) continue;
-            ContainerPosition owner = value.position();
-            boolean counted = profile.container(owner.x(), owner.y(), owner.z()).filter(registered -> registered.blockId().equals(owner.blockId())).isPresent();
-            if (counted && value.halves().stream().anyMatch(half -> same(half, position))) return true;
-        }
-        return false;
-    }
     public static int size() { return observed.size(); }
     public static void discard() { observed.clear(); inventory = Map.of(); menu = null; open = null; }
-    private static boolean same(ContainerPosition a, ContainerPosition b) { return a.x() == b.x() && a.y() == b.y() && a.z() == b.z(); }
 
     private static Open attribute(AbstractContainerMenu current) {
         LocationProfile profile = StockClient.known();
@@ -79,21 +63,20 @@ public final class StockObservations {
         ContainerPosition position = target.position();
         ContainerPosition registered = profile.container(position.x(), position.y(), position.z()).orElse(null);
         if (registered == null || !registered.blockId().equals(position.blockId())) return null;
-        int slots = target.halves().size() == 2 ? 54 : slots(position.blockId());
+        // Double chests are never attributed: two registrations and a joined inventory cannot be split honestly on the client.
+        if (target.halves().size() != 1) return null;
+        int slots = slots(position.blockId());
         if (current.slots.size() - PLAYER_SLOTS != slots) return null;
-        return new Open(here.world(), here.dimension(), registered, target.halves(), slots);
+        return new Open(here.world(), here.dimension(), registered, slots);
     }
     private static void record(Open target, AbstractContainerMenu current) {
         Map<String, Long> counts = new HashMap<>();
         for (int i = 0; i < target.slots(); i++) add(counts, current.slots.get(i).getItem());
         if (!LocationReport.validCounts(counts)) return;
-        // Readings of either half in this world and dimension (e.g. from before two single chests were joined, or a combined
-        // reading of a since-broken double chest) are superseded by this one: compare their recorded halves, not just keys.
-        observed.values().removeIf(old -> old.world().equals(target.world()) && old.dimension().equals(target.dimension())
-            && old.halves().stream().anyMatch(previous -> target.halves().stream().anyMatch(half -> same(half, previous))));
-        while (observed.size() >= StockLimits.MAX_POSITIONS) observed.remove(observed.keySet().iterator().next());
+        while (observed.size() >= StockLimits.MAX_POSITIONS && !observed.containsKey(Key.of(target.world(), target.dimension(), target.position())))
+            observed.remove(observed.keySet().iterator().next());
         observed.put(Key.of(target.world(), target.dimension(), target.position()),
-            new Observation(target.world(), target.dimension(), target.position(), List.copyOf(target.halves()), Map.copyOf(counts), Instant.now()));
+            new Observation(target.world(), target.dimension(), target.position(), Map.copyOf(counts), Instant.now()));
     }
     private static Map<String, Long> count(Container container, int size) {
         Map<String, Long> counts = new HashMap<>();

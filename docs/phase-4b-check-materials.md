@@ -81,10 +81,13 @@ The client fallback is used when:
 - the server refuses the request;
 - or the server answers a location UNAUTHORIZED.
 
-In those cases a registered container you opened is shown as OBSERVED with its time, never as CHECKED, and the footer names the limited scope. An observation is recorded only if both of these hold when a container screen opens:
+In those cases a registered container you opened is shown as OBSERVED with its time, never as CHECKED, and the footer names the limited scope. An observation is recorded only if all of these hold when a container screen opens:
 
-- the looked-at block is a registered position of the last Location File shown in that world;
-- the menu's container slot count matches the block (27, or 54 for a double chest; 5 for a hopper; 9 for a dropper or dispenser).
+- the looked-at block is a registered position of the last Location File shown in that world and dimension;
+- it is a single container: double chests are never observed, because two registrations and one joined inventory cannot be split honestly on the client;
+- the menu's container slot count matches the block (27; 5 for a hopper; 9 for a dropper or dispenser).
+
+An observation only **fills a gap**: it is used for a location that has no report in this check and no kept reading from an earlier one. It never replaces, removes or competes with other evidence, so a cached observation cannot double count a container or bring back an older value. (Repository owner decision, 2026-10-31, after repeated review findings on merging observations with retained readings.)
 
 The contents are then updated for as long as the screen stays open. Observations and the inventory line are kept in memory only.
 

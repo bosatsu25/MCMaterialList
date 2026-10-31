@@ -129,21 +129,6 @@ class StockLedgerTest {
         assertEquals(StockSnapshot.Previous.NONE, snapshot.previous(STONE)); assertEquals(0, snapshot.machine(STONE));
     }
 
-    @Test void aReadingOfOneHalfSupersedesAKeptDoubleChestReading() {
-        // Index 0 and 4 are the two halves; the double chest was observed as 15 under index 0.
-        var ledger = new StockLedger(clock); ledger.begin(profile);
-        var a = profile.positions().get(0); var b = profile.positions().get(4);
-        assertTrue(ledger.accept(new LocationReport(0, LocationStatus.OBSERVED, ContainerKind.STORAGE, Map.of(STONE, 15L)), start, List.of(a, b)));
-        assertTrue(ledger.accept(LocationReport.empty(4, LocationStatus.DUPLICATE, ContainerKind.STORAGE)));
-        ledger.complete();
-        // A was broken; the remaining chest B now holds 5. The old combined 15 must not be counted next to it.
-        now[0] = start.plusSeconds(30); ledger.begin(profile);
-        assertTrue(ledger.accept(new LocationReport(4, LocationStatus.OBSERVED, ContainerKind.STORAGE, Map.of(STONE, 5L)), now[0], List.of(b)));
-        ledger.complete();
-        var snapshot = ledger.snapshot(world, profile).orElseThrow();
-        assertEquals(5, snapshot.previous(STONE).count()); assertEquals(1, snapshot.previous(STONE).locations());
-    }
-
     @Test void aChangedLocationDropsItsKeptReading() {
         // Server path: the double chest was checked as 15 under index 0; then that half was broken and the server reports CHANGED.
         var ledger = new StockLedger(clock); ledger.begin(profile);
@@ -156,13 +141,19 @@ class StockLedgerTest {
         assertEquals(5, snapshot.confirmed(STONE)); assertEquals(StockSnapshot.Previous.NONE, snapshot.previous(STONE));
     }
 
-    @Test void anOlderReplayedObservationNeverReplacesANewerReading() {
+    @Test void observationsOnlyFillLocationsWithoutOtherEvidence() {
         var ledger = new StockLedger(clock); ledger.begin(profile);
-        // Server reading of 20 at t+10; a fallback scan later replays an observation of 5 taken at t.
+        // Server reading of 20 at t+10; a later fallback scan offers an observation of 5 taken at t for the same chest.
         now[0] = start.plusSeconds(10); assertTrue(ledger.accept(checked(1, STONE, 20))); ledger.complete();
         now[0] = start.plusSeconds(20); ledger.begin(profile);
-        assertTrue(ledger.accept(new LocationReport(1, LocationStatus.OBSERVED, ContainerKind.STORAGE, Map.of(STONE, 5L)), start));
+        var observed = new LocationReport(1, LocationStatus.OBSERVED, ContainerKind.STORAGE, Map.of(STONE, 5L));
+        assertFalse(ledger.fill(observed, start));
+        // A location with no evidence at all is filled; a second offer for it in the same scan is ignored.
+        assertTrue(ledger.fill(new LocationReport(3, LocationStatus.OBSERVED, ContainerKind.STORAGE, Map.of(STONE, 7L)), start));
+        assertFalse(ledger.fill(new LocationReport(3, LocationStatus.OBSERVED, ContainerKind.STORAGE, Map.of(STONE, 9L)), start));
+        assertFalse(ledger.fill(checked(0, STONE, 1), start));
         ledger.complete();
-        assertEquals(20, ledger.snapshot(world, profile).orElseThrow().previous(STONE).count());
+        var snapshot = ledger.snapshot(world, profile).orElseThrow();
+        assertEquals(27, snapshot.previous(STONE).count()); assertEquals(2, snapshot.previous(STONE).locations());
     }
 }
