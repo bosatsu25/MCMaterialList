@@ -31,13 +31,17 @@ final class UiParityEvidence {
         var labels = new java.util.HashSet<String>();
         for (String key : java.util.List.of("track", "refresh", "recover", "confirm_recovery")) labels.add(workText(screen, key));
         for (String key : java.util.List.of("show_info", "hide_done")) for (String value : java.util.List.of("ON", "OFF")) labels.add(workText(screen, key, value));
-        int archived;
+        int archived, stock = 0;
         boolean recovery;
         boolean material = screen instanceof dev.mcmateriallist.fabric.client.material.MaterialWorkScreen;
         if (screen instanceof dev.mcmateriallist.fabric.client.material.MaterialWorkScreen materialScreen) {
             var work = materialScreen.mcmateriallist$session();
             // Issue #9: the Location File control is identified by its exact current label, never by prefix.
             labels.add(work.location().label());
+            // Issue #10: Check Materials always, and its details control exactly while a check of the current file exists.
+            labels.add(work.stock().label());
+            stock = 1;
+            if (work.stock().details()) { labels.add(dev.mcmateriallist.fabric.client.stock.StockSession.text("details")); stock++; }
             archived = work.dataset() == null ? 0 : work.dataset().archived().size();
             recovery = work.status() == dev.mcmateriallist.core.persistence.StoreStatus.RECOVERY_REQUIRED;
         } else {
@@ -48,7 +52,7 @@ final class UiParityEvidence {
         labels.add(workText(screen, "archived", archived));
         var added = controls.stream().filter(control -> control.getHoverStrings().stream().anyMatch(labels::contains)
             || "MCMaterialList".equals(((dev.mcmateriallist.fabric.test.mixin.ButtonTestAccess) control).phase0Text())).toList();
-        require(added.size() == (material ? 5 : 4) + (recovery || archived > 0 ? 1 : 0), "Added work/diagnostic controls not identified by complete localized labels");
+        require(added.size() == (material ? 5 : 4) + stock + (recovery || archived > 0 ? 1 : 0), "Added work/diagnostic controls not identified by complete localized labels");
         if (screen instanceof dev.mcmateriallist.fabric.client.region.RegionWorkScreen region && !region.mcmateriallist$session().compact()) {
             var toolbar = added.stream().filter(control -> !"MCMaterialList".equals(((dev.mcmateriallist.fabric.test.mixin.ButtonTestAccess) control).phase0Text()))
                 .sorted(java.util.Comparator.comparingInt(WidgetBase::getX)).toList();

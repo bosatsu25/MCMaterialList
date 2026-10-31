@@ -71,7 +71,13 @@ public abstract class MaterialRowMixin extends WidgetListEntrySortable<MaterialL
     @Inject(method = "render", at = @At("TAIL"), require = 1)
     private void drawWorkInfo(GuiContext ctx, int mouseX, int mouseY, boolean selected, CallbackInfo callback) {
         if (mcmateriallist$id != null && mcmateriallist$work.showInfo())
-            drawString(ctx, x + 44, y + 26, 0xFFBBBBBB, MaterialPresentation.clamp(MaterialPresentation.info(mcmateriallist$work.state(mcmateriallist$id)), Math.max(0, mcmateriallist$layout.noticeX() - 48)));
+            drawString(ctx, x + 44, y + 26, 0xFFBBBBBB, MaterialPresentation.clamp(mcmateriallist$info(), Math.max(0, mcmateriallist$layout.noticeX() - 48)));
+    }
+    /** Show Info text; Check Materials only appends its own segment, Total/Missing/Available columns stay upstream's. */
+    @Unique private String mcmateriallist$info() {
+        String info = MaterialPresentation.info(mcmateriallist$work.state(mcmateriallist$id));
+        String stock = mcmateriallist$work.stock().info(mcmateriallist$id.registryId());
+        return stock.isEmpty() ? info : info + " | " + stock;
     }
     @Inject(method = "postRenderHovered", at = @At("HEAD"), cancellable = true, require = 1)
     private void workTooltip(GuiContext ctx, int mouseX, int mouseY, boolean selected, CallbackInfo callback) {
@@ -87,6 +93,9 @@ public abstract class MaterialRowMixin extends WidgetListEntrySortable<MaterialL
                     : mcmateriallist$work.feedback();
         }
         else if (mcmateriallist$notice.isMouseOver(mouseX, mouseY)) text = MaterialPresentation.info(state) + " | " + mcmateriallist$work.feedback() + (mcmateriallist$work.changed(mcmateriallist$id) ? " | " + MaterialWorkSession.text("definition_changed") : "");
+        // The per-source stock breakdown, on the Show Info line itself.
+        else if (mcmateriallist$work.showInfo() && mouseX >= x + 44 && mouseX < x + mcmateriallist$layout.noticeX() && mouseY >= y + 24 && mouseY < y + 36)
+            text = mcmateriallist$work.stock().tooltip(mcmateriallist$id.registryId());
         if (text != null) { ctx.renderTooltip(textRenderer, Component.literal(text), mouseX, mouseY); callback.cancel(); }
     }
 }

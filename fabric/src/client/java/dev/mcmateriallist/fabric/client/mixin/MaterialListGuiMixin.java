@@ -28,7 +28,8 @@ public abstract class MaterialListGuiMixin extends GuiListBase<MaterialListEntry
     }
     @Inject(method = "getBrowserHeight()I", at = @At("RETURN"), cancellable = true, require = 0)
     private void reserveFooter(CallbackInfoReturnable<Integer> callback) {
-        callback.setReturnValue(Math.max(0, callback.getReturnValue() - (mcmateriallist$session().compact() ? 8 : 62)));
+        // Narrow layout: the progress line plus the Check Materials summary line above it (Issue #10).
+        callback.setReturnValue(Math.max(0, callback.getReturnValue() - (mcmateriallist$session().compact() ? 8 : 74)));
     }
 
     @Inject(method = "initGui()V", at = @At("TAIL"), require = 0)

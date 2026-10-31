@@ -15,6 +15,12 @@ class ContainerBlocksTest {
                 "minecraft:furnace", "minecraft:copper_chest", "minecraft:grey_shulker_box", "modded:chest", "chest", "MINECRAFT:CHEST", "", null))
             assertFalse(ContainerBlocks.supported(id), String.valueOf(id));
     }
+    @Test void hoppersDroppersAndDispensersAreMachines() {
+        for (String id : List.of("minecraft:hopper", "minecraft:dropper", "minecraft:dispenser")) assertEquals(ContainerKind.MACHINE, ContainerBlocks.kind(id), id);
+        for (String id : List.of("minecraft:chest", "minecraft:trapped_chest", "minecraft:barrel", "minecraft:shulker_box", "minecraft:red_shulker_box", "minecraft:stone"))
+            assertEquals(ContainerKind.STORAGE, ContainerBlocks.kind(id), id);
+        assertThrows(NullPointerException.class, () -> ContainerBlocks.kind(null));
+    }
     @Test void doubleChestHalvesShareTheSmallerPosition() {
         ContainerPosition west = new ContainerPosition(4, 64, -2, "minecraft:chest"), east = new ContainerPosition(5, 64, -2, "minecraft:chest");
         assertEquals(west, ContainerBlocks.canonical(west, east)); assertEquals(west, ContainerBlocks.canonical(east, west));

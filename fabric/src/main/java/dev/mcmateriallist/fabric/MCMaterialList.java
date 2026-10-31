@@ -10,6 +10,8 @@ public final class MCMaterialList implements ModInitializer {
         dev.mcmateriallist.fabric.shared.SharedPayload.register();
         dev.mcmateriallist.fabric.shared.SharedControlPayload.register();
         dev.mcmateriallist.fabric.shared.SharedServerNetworking.initialize();
+        dev.mcmateriallist.fabric.stock.StockPayload.register();
+        dev.mcmateriallist.fabric.stock.StockServerNetworking.initialize();
         LoggerFactory.getLogger("mcmateriallist").info("MCMaterialList Phase 0 common initialized");
     }
 }

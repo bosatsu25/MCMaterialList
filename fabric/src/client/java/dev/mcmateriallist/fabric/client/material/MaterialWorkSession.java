@@ -45,6 +45,11 @@ public final class MaterialWorkSession {
     private boolean sharedRebuild;
     private final dev.mcmateriallist.fabric.client.location.LocationSession locations;
     private boolean locationRebuild;
+    private final dev.mcmateriallist.fabric.client.stock.StockSession stock;
+    private ButtonGeneric stockButton;
+    private String stockShown;
+    private boolean stockRebuild;
+    private long stockBuilt;
     public MaterialWorkSession(GuiMaterialList screen) {
         this.screen = screen;
         LocalPlacementId identity = null;
@@ -57,9 +62,12 @@ public final class MaterialWorkSession {
         shared = new dev.mcmateriallist.fabric.client.shared.SharedWorkBackend(MCMaterialListClient.shared(), placement, DatasetKind.MATERIALS,
             () -> PlacementWorkAdapter.owner(screen.getMaterialList()), screen::getMaterialList, this::ready);
         locations = new dev.mcmateriallist.fabric.client.location.LocationSession(() -> { if (Minecraft.getInstance().gui.screen() == screen) screen.initGui(); });
+        stock = new dev.mcmateriallist.fabric.client.stock.StockSession(locations::profile);
     }
     public dev.mcmateriallist.fabric.client.shared.SharedWorkBackend shared() { return shared; }
     public dev.mcmateriallist.fabric.client.location.LocationSession location() { return locations; }
+    /** Check Materials for this screen's current Location File; it never reads or changes work, counts or completion. */
+    public dev.mcmateriallist.fabric.client.stock.StockSession stock() { return stock; }
     public static String text(String key, Object... args) { return Component.translatable("mcmateriallist.material." + key, args).getString(); }
     public MaterialWorkDataset dataset() { return confirmed; }
     public StoreStatus status() { return status; }
@@ -140,11 +148,29 @@ public final class MaterialWorkSession {
         locations.ensure();
         String location = locations.label();
         int footer = screen.getScreenHeight() - 22, lower = screen.getScreenHeight() - 58;
-        int[] slot = slot(toolbarWidth(location), compact ? new int[][]{{filterY, 0}, {footer, 0}, {lower, refreshX + refreshButton.getWidth() + 2}}
+        // Compact layout reserves only 8px under the list, so the row above the footer overlaps it: use the title row first.
+        int[] slot = slot(toolbarWidth(location), compact ? new int[][]{{filterY, 0}, {footer, 0}, {2, screen.getScreenWidth() / 2}, {lower, refreshX + refreshButton.getWidth() + 2}}
             : new int[][]{{filterY, 0}, {lower, 0}, {footer, 0}});
         addToolbar(slot[0], slot[1], slot[2], location, (button, mouse) ->
             GuiBase.openGui(new dev.mcmateriallist.fabric.client.location.LocationFileScreen(screen, locations, shared)));
+        // Issue #10: Check Materials follows the Location File control in the same rows; the title row's right half is the
+        // last resort so a narrow screen never clamps it outside the GUI.
+        int[][] stockRows = compact ? new int[][]{{filterY, 0}, {footer, 0}, {2, screen.getScreenWidth() / 2}, {lower, refreshX + refreshButton.getWidth() + 2}}
+            : new int[][]{{filterY, 0}, {lower, 0}, {footer, 0}, {2, screen.getScreenWidth() / 2}};
+        String check = stock.label();
+        int[] checkSlot = slot(toolbarWidth(check), stockRows);
+        stockButton = addToolbar(checkSlot[0], checkSlot[1], checkSlot[2], check, (button, mouse) -> { stock.click(); screen.initGui(); });
+        stockButton.setEnabled(stock.enabled());
+        stockShown = stockState(); stockBuilt = System.nanoTime();
+        if (stock.details()) {
+            String details = dev.mcmateriallist.fabric.client.stock.StockSession.text("details");
+            int[] detailSlot = slot(toolbarWidth(details), stockRows);
+            addToolbar(detailSlot[0], detailSlot[1], detailSlot[2], details, (button, mouse) ->
+                GuiBase.openGui(new dev.mcmateriallist.fabric.client.stock.StockDetailScreen(screen, stock)));
+        }
     }
+    /** The toolbar is rebuilt when this changes: the button label and whether the details control exists. */
+    private String stockState() { return stock.label() + '|' + stock.details(); }
     private int toolbarWidth(String label) { return Math.min(screen.getStringWidth(label) + 10, Math.max(28, (screen.getScreenWidth() - 24) / 4 - 4)); }
     private ButtonGeneric addToolbar(int x, int y, String label, IButtonActionListener action) { return addToolbar(x, y, toolbarWidth(label), label, action); }
     private ButtonGeneric addToolbar(int x, int y, int width, String label, IButtonActionListener action) {
@@ -168,6 +194,7 @@ public final class MaterialWorkSession {
     public void renderControls() {
         if (refreshButton != null) refreshButton.setEnabled(!shared.loading() && (shared.selected() ? !shared.pending() && ready() : !pending && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT)));
         if (recoverButton != null) recoverButton.setEnabled(!pending && !shared.loading() && ready());
+        if (stockButton != null) stockButton.setEnabled(stock.enabled());
     }
     public void footer(GuiContext ctx) {
         if (!locationRebuild && locations.stale()) {
@@ -184,14 +211,33 @@ public final class MaterialWorkSession {
                 if (Minecraft.getInstance().gui.screen() == screen) screen.initGui();
             });
         }
+        // A running check changes its label with every report; rebuild at most four times a second, at once when it ends.
+        String stockNow = stockState();
+        if (!stockRebuild && stockShown != null && !stockNow.equals(stockShown)
+            && (!dev.mcmateriallist.fabric.client.stock.StockClient.scanning() || System.nanoTime() - stockBuilt > 250_000_000L)) {
+            stockRebuild = true;
+            Minecraft.getInstance().schedule(() -> {
+                stockRebuild = false;
+                if (Minecraft.getInstance().gui.screen() == screen) screen.initGui();
+            });
+        }
         renderControls();
         var valueProgress = progress();
         String progress = valueProgress == null ? text("untracked") : text("progress", valueProgress.completed(), valueProgress.total(), valueProgress.percentage());
         if (valueProgress != null) progress = dev.mcmateriallist.core.ui.WorkProgressPresentation.style(progress, valueProgress);
         int y = screen.getScreenHeight() - (compact() ? 46 : 72);
-        String value = MaterialPresentation.clamp(progress + "  " + feedback(), Math.max(0, screen.getScreenWidth() - 24));
+        var stockLine = stock.footer();
+        String line = progress + "  " + feedback();
+        // The summary sits above the progress line where the list reserves room for it, else it follows on the same line.
+        if (stockLine != null && compact()) line += "  " + stockLine.text();
+        String value = MaterialPresentation.clamp(line, Math.max(0, screen.getScreenWidth() - 24));
         RenderUtils.drawRect(ctx, 10, y - 2, screen.getStringWidth(value) + 4, 12, 0xFF1D2027);
         screen.drawString(ctx, value, 12, y, 0xFFFFFFFF);
+        if (stockLine != null && !compact()) {
+            String summary = MaterialPresentation.clamp(stockLine.text(), Math.max(0, screen.getScreenWidth() - 24));
+            RenderUtils.drawRect(ctx, 10, y - 14, screen.getStringWidth(summary) + 4, 12, 0xFF1D2027);
+            screen.drawString(ctx, summary, 12, y - 12, stockLine.color());
+        }
     }
     public void refresh() {
         if (shared.loading()) return;

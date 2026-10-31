@@ -2,13 +2,24 @@ package dev.mcmateriallist.fabric.test;
 
 import static dev.mcmateriallist.core.shared.SharedEvents.Status.*;
 
+import dev.mcmateriallist.core.location.ContainerPosition;
+import dev.mcmateriallist.core.location.LocationProfile;
+import dev.mcmateriallist.core.location.LocationProfileId;
 import dev.mcmateriallist.core.shared.*;
 import dev.mcmateriallist.core.shared.protocol.SharedMessage;
 import dev.mcmateriallist.core.shared.protocol.SharedProtocol;
 import dev.mcmateriallist.core.shared.protocol.SharedTransfers;
 import dev.mcmateriallist.core.shared.transport.SharedClientState;
+import dev.mcmateriallist.core.stock.LocationReport;
+import dev.mcmateriallist.core.stock.LocationStatus;
+import dev.mcmateriallist.core.stock.protocol.StockMessage;
 import dev.mcmateriallist.core.work.*;
+import dev.mcmateriallist.fabric.client.location.LocationWorld;
 import dev.mcmateriallist.fabric.client.shared.SharedClientNetworking;
+import dev.mcmateriallist.fabric.client.stock.StockClient;
+import dev.mcmateriallist.fabric.client.stock.StockClientNetworking;
+import dev.mcmateriallist.fabric.client.stock.StockObservations;
+import dev.mcmateriallist.fabric.client.stock.StockSession;
 import dev.mcmateriallist.fabric.shared.SharedPayload;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -17,6 +28,7 @@ import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
@@ -27,7 +39,11 @@ import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.BlockHitResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,8 +62,12 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
     private static final MaterialTaskId M0 = material(0), M1 = material(1), M2 = material(2), M3 = material(3);
     private final String role = System.getProperty("mcmateriallist.multiplayer.role", "");
     private final Path coordination = Path.of(System.getProperty("mcmateriallist.multiplayer.dir", "."));
+    private static final String OVERWORLD = "minecraft:overworld", COBBLE = "minecraft:cobblestone";
+    /** The server-side per-player Check Materials cooldown is five seconds. */
+    private static final Duration COOLDOWN = Duration.ofSeconds(6);
     private ClientGameTestContext context;
     private UUID actor;
+    private BlockPos stockChest;
 
     private record Sent(SharedCommand command, SharedEvents.CommandResult result) {}
 
@@ -112,10 +132,15 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
             && "while beta offline".equals(refreshed.rows().get(M0).note()), "Definition update lost confirmed work");
         mark("alpha-manifest", Long.toString(refreshed.manifest().version()));
         awaitFile("beta-refetched");
+        stockAlpha(scope);
 
         // AC-14: a Viewer's direct edit is refused by the authority and changes nothing.
         membership(scope, beta, ProjectRole.VIEWER);
         mark("alpha-viewer", "");
+        // Issue #10: put the Viewer on the registered chest so it can open it for the client fallback.
+        awaitFile("beta-stock-viewer");
+        command("tp McmlBeta " + (stockChest.getX() + 0.5) + " " + (stockChest.getY() + 1) + " " + (stockChest.getZ() + 0.5) + " 0 90");
+        mark("stock-beta-teleported", "");
         awaitFile("beta-viewer-denied");
         check("beta note 2".equals(join(scope).rows().get(M1).note()), "Viewer edit changed authoritative work");
 
@@ -211,6 +236,7 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
         check(refetched.manifest().version() == manifest && "beta note 2".equals(refetched.rows().get(M1).note()),
             "Re-fetched definition or work did not match the authority");
         mark("beta-refetched", "");
+        stockBetaMember(scope);
 
         awaitFile("alpha-viewer");
         until("membership invalidation", client -> SharedClientNetworking.state().status() == SharedClientState.Status.RESYNC_REQUIRED);
@@ -223,6 +249,7 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
         var refused = replay(edit);
         check(refused.status() == DENIED && refused.row() == null, "Authority accepted a Viewer edit: " + refused);
         check("beta note 2".equals(snapshot().rows().get(M1).note()), "Viewer refusal changed presentation");
+        stockBetaViewer(scope);
         mark("beta-viewer-denied", "");
 
         String before = awaitFile("before-restart");
@@ -246,6 +273,113 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
         check(after.status() == DENIED && after.snapshot() == null, "Removed participant could still join: " + after.status());
         mark("beta-final", "");
         disconnect();
+    }
+
+    /**
+     * Issue #10, alpha (operator via the harness's ops.json, and the project's Administrator): builds a registered chest, reads it
+     * without a grant (R1), then grants it to the project. Beta's denied attempt comes first, so the grant is what changes it.
+     */
+    private void stockAlpha(ProjectScope scope) {
+        BlockPos base = context.computeOnClient(client -> client.player.blockPosition());
+        BlockPos chest = base.offset(3, 0, 0); stockChest = chest;
+        command("tp McmlBeta McmlAlpha");
+        command(fill(base.offset(2, -1, -1), base.offset(4, -1, 1), "minecraft:stone"));
+        command(fill(base.offset(2, 0, -1), base.offset(4, 2, 1), "minecraft:air"));
+        command("setblock " + chest.getX() + " " + chest.getY() + " " + chest.getZ() + " minecraft:chest[facing=north]");
+        command("item replace block " + chest.getX() + " " + chest.getY() + " " + chest.getZ() + " container.0 with " + COBBLE + " 16");
+        until("stock fixture chest", client -> client.level.getBlockState(chest).is(Blocks.CHEST));
+        mark("stock-fixture", chest.getX() + "," + chest.getY() + "," + chest.getZ());
+        awaitFile("beta-stock-denied");
+        var own = only(stockScan(scope, chest));
+        check(own.status() == LocationStatus.CHECKED && own.count(COBBLE) == 16, "Operator could not read the chest: " + own);
+        var replies = new ConcurrentLinkedQueue<StockMessage>();
+        var position = chestPosition(chest);
+        check(context.computeOnClient(client -> StockClientNetworking.send(id -> new StockMessage.GrantRequest(id, scope, OVERWORLD, List.of(position)), replies::add)) != null,
+            "Grant request was not sent");
+        until("grant reply", client -> !replies.isEmpty());
+        var reply = (StockMessage.GrantReply) replies.peek();
+        check(reply.status() == StockMessage.GrantStatus.OK && reply.grants().stream().anyMatch(grant -> grant.at(OVERWORLD, position) && actor.equals(grant.approver())),
+            "Administrator operator could not grant the chest: " + reply.status());
+        mark("stock-granted", "");
+        awaitFile("beta-stock-checked");
+        LOG.info("Multiplayer alpha stock operator read and grant PASS");
+    }
+    /** Issue #10, beta as MEMBER: UNAUTHORIZED without a grant (no content), CHECKED once alpha granted the position. */
+    private void stockBetaMember(ProjectScope scope) {
+        String[] at = awaitFile("stock-fixture").split(",");
+        BlockPos chest = new BlockPos(Integer.parseInt(at[0]), Integer.parseInt(at[1]), Integer.parseInt(at[2])); stockChest = chest;
+        var denied = only(stockScan(scope, chest));
+        check(denied.status() == LocationStatus.UNAUTHORIZED && denied.counts().isEmpty(), "A Member read an ungranted chest: " + denied);
+        mark("beta-stock-denied", "");
+        awaitFile("stock-granted");
+        idle(COOLDOWN);
+        var granted = only(stockScan(scope, chest));
+        check(granted.status() == LocationStatus.CHECKED && granted.count(COBBLE) == 16, "A Member could not read a granted chest: " + granted);
+        mark("beta-stock-checked", "");
+        LOG.info("Multiplayer beta stock member UNAUTHORIZED then granted CHECKED PASS");
+    }
+    /**
+     * Issue #10, beta demoted to VIEWER: the grant no longer applies (UNAUTHORIZED); a refusal falls back to the client; after beta
+     * opens the registered chest itself, the UNAUTHORIZED location is shown as OBSERVED with the limited-scope label.
+     */
+    private void stockBetaViewer(ProjectScope scope) {
+        var position = chestPosition(stockChest);
+        var world = context.computeOnClient(client -> ((LocationWorld.Available) LocationWorld.resolve()).world());
+        LocationProfile profile = new LocationProfile(LocationProfileId.create(), 0, "beta stock", world, OVERWORLD, scope, List.of(position));
+        idle(COOLDOWN);
+        check(context.computeOnClient(client -> StockClient.start(profile)), "Check Materials did not start");
+        until("viewer check", client -> !StockClient.scanning() && StockClient.done() != null);
+        var viewer = context.computeOnClient(client -> StockClient.snapshot(profile).orElseThrow().report(0).orElseThrow());
+        check(viewer.status() == LocationStatus.UNAUTHORIZED && viewer.counts().isEmpty() && context.computeOnClient(client -> StockClient.unauthorized()) == 1,
+            "A Viewer read a granted chest: " + viewer);
+        check(context.computeOnClient(client -> StockClient.start(profile)), "Second Check Materials did not start");
+        until("cooldown refusal", client -> !StockClient.scanning() && StockClient.refusal() != null);
+        check(context.computeOnClient(client -> StockClient.refusal() == StockMessage.RefusalReason.COOLDOWN && StockClient.mode() == StockClient.Mode.FALLBACK),
+            "Cooldown refusal did not fall back");
+        LOG.info("Multiplayer beta stock viewer UNAUTHORIZED PASS");
+        mark("beta-stock-viewer", "");
+        awaitFile("stock-beta-teleported");
+        until("looking at the registered chest", client -> client.hitResult instanceof BlockHitResult hit && hit.getBlockPos().equals(stockChest));
+        context.runOnClient(client -> client.gameMode.useItemOn(client.player, InteractionHand.MAIN_HAND, (BlockHitResult) client.hitResult));
+        until("observed chest", client -> client.player.containerMenu != client.player.inventoryMenu
+            && StockObservations.of(profile, position) != null && StockObservations.of(profile, position).counts().getOrDefault(COBBLE, 0L) == 16);
+        context.runOnClient(client -> client.player.closeContainer());
+        until("chest closed", client -> client.player.containerMenu == client.player.inventoryMenu);
+        idle(COOLDOWN);
+        check(context.computeOnClient(client -> StockClient.start(profile)), "Third Check Materials did not start");
+        until("fallback check", client -> !StockClient.scanning() && StockClient.done() != null);
+        context.runOnClient(client -> {
+            var snapshot = StockClient.snapshot(profile).orElseThrow();
+            var observed = snapshot.report(0).orElseThrow();
+            check(observed.status() == LocationStatus.OBSERVED && observed.count(COBBLE) == 16 && StockClient.observed() == 1, "Fallback did not observe the opened chest: " + observed);
+            check(snapshot.coverage().checked() == 0 && snapshot.confirmed(COBBLE) == 0 && snapshot.previous(COBBLE).count() == 16, "An observation was counted as CHECKED");
+            var footer = new StockSession(() -> profile).footer();
+            check(footer != null && footer.text().contains(StockSession.text("fallback")), "Fallback footer lacks the limited-scope label: " + footer);
+        });
+        LOG.info("Multiplayer beta stock fallback OBSERVED PASS");
+    }
+    private List<StockMessage> stockScan(ProjectScope binding, BlockPos chest) {
+        var replies = new ConcurrentLinkedQueue<StockMessage>();
+        var position = chestPosition(chest);
+        check(context.computeOnClient(client -> StockClientNetworking.send(id -> new StockMessage.ScanRequest(id, LocationProfileId.create(), 0, binding, OVERWORLD,
+            List.of(position)), replies::add)) != null, "Stock request was not sent: " + diagnostics());
+        until("stock reply", client -> replies.stream().anyMatch(m -> m instanceof StockMessage.Done || m instanceof StockMessage.Refused));
+        return List.copyOf(replies);
+    }
+    private static LocationReport only(List<StockMessage> replies) {
+        check(replies.stream().noneMatch(m -> m instanceof StockMessage.Refused), "Stock request refused: " + replies);
+        var reports = replies.stream().filter(m -> m instanceof StockMessage.Report).map(m -> ((StockMessage.Report) m).report()).toList();
+        check(reports.size() == 1 && reports.get(0).index() == 0, "Expected exactly one stock report: " + reports);
+        return reports.get(0);
+    }
+    private static ContainerPosition chestPosition(BlockPos chest) { return new ContainerPosition(chest.getX(), chest.getY(), chest.getZ(), "minecraft:chest"); }
+    private void command(String command) { context.runOnClient(client -> client.getConnection().sendCommand(command)); }
+    private static String fill(BlockPos from, BlockPos to, String block) {
+        return "fill " + from.getX() + " " + from.getY() + " " + from.getZ() + " " + to.getX() + " " + to.getY() + " " + to.getZ() + " " + block;
+    }
+    private void idle(Duration duration) {
+        long deadline = System.nanoTime() + duration.toNanos();
+        while (System.nanoTime() - deadline < 0) pause();
     }
 
     /** AC-11: both claims are sent unconditionally at a shared barrier, so the authority decides the race. */
