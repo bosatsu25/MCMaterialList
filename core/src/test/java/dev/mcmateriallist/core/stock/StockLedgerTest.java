@@ -143,4 +143,16 @@ class StockLedgerTest {
         var snapshot = ledger.snapshot(world, profile).orElseThrow();
         assertEquals(5, snapshot.previous(STONE).count()); assertEquals(1, snapshot.previous(STONE).locations());
     }
+
+    @Test void aChangedLocationDropsItsKeptReading() {
+        // Server path: the double chest was checked as 15 under index 0; then that half was broken and the server reports CHANGED.
+        var ledger = new StockLedger(clock); ledger.begin(profile);
+        assertTrue(ledger.accept(checked(0, STONE, 15))); assertTrue(ledger.accept(LocationReport.empty(4, LocationStatus.DUPLICATE, ContainerKind.STORAGE)));
+        ledger.complete();
+        now[0] = start.plusSeconds(30); ledger.begin(profile);
+        assertTrue(ledger.accept(LocationReport.empty(0, LocationStatus.CHANGED, ContainerKind.STORAGE))); assertTrue(ledger.accept(checked(4, STONE, 5)));
+        ledger.complete();
+        var snapshot = ledger.snapshot(world, profile).orElseThrow();
+        assertEquals(5, snapshot.confirmed(STONE)); assertEquals(StockSnapshot.Previous.NONE, snapshot.previous(STONE));
+    }
 }

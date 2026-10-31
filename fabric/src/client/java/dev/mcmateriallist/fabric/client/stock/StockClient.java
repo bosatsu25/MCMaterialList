@@ -149,7 +149,7 @@ public final class StockClient {
             return true;
         }
         boolean accepted = ledger.accept(new LocationReport(index, LocationStatus.OBSERVED, ContainerBlocks.kind(position.blockId()), value.counts()), value.at(),
-            StockObservations.halvesOf(position));
+            value.halves());
         if (accepted) { observed++; version++; }
         return accepted;
     }

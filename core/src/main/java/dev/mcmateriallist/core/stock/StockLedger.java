@@ -60,8 +60,9 @@ public final class StockLedger {
             spans.keySet().retainAll(readings.keySet());
             readings.put(position, StockReading.of(report, at)); spans.put(position, covered);
         }
-        // Its contents belong to another index now; an old reading would be counted twice as previous.
-        else if (report.status() == LocationStatus.DUPLICATE) { readings.remove(position); spans.remove(position); }
+        // DUPLICATE: its contents belong to another index now. CHANGED: the registered container is gone (e.g. a broken half of a
+        // double chest whose combined reading would otherwise be counted next to the remaining half). Either way drop the old reading.
+        else if (report.status() == LocationStatus.DUPLICATE || report.status() == LocationStatus.CHANGED) { readings.remove(position); spans.remove(position); }
         return true;
     }
     /** Done or cancelled: unreported locations stay unchecked. */
