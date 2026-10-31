@@ -55,10 +55,13 @@ public record StockSnapshot(LocationProfileId profileId, long profileGeneration,
     /** CHECKED hoppers, droppers and dispensers; never part of confirmed(). */
     public long machine(String itemId) { return checked(itemId, ContainerKind.MACHINE); }
     /** Earlier storage readings of locations that are unchecked now, including this snapshot's OBSERVED locations. */
-    public Previous previous(String itemId) {
+    public Previous previous(String itemId) { return previous(itemId, ContainerKind.STORAGE); }
+    /** The same for hoppers, droppers and dispensers; never part of previous(). */
+    public Previous previousMachine(String itemId) { return previous(itemId, ContainerKind.MACHINE); }
+    private Previous previous(String itemId, ContainerKind kind) {
         long count = 0; int locations = 0; Instant oldest = null;
         for (StockReading reading : previous.values()) {
-            if (reading.kind() != ContainerKind.STORAGE || !reading.counts().containsKey(itemId)) continue;
+            if (reading.kind() != kind || !reading.counts().containsKey(itemId)) continue;
             count = saturated(count, reading.counts().get(itemId)); locations++;
             if (oldest == null || reading.at().isBefore(oldest)) oldest = reading.at();
         }
@@ -72,6 +75,17 @@ public record StockSnapshot(LocationProfileId profileId, long profileGeneration,
             else if (report.status() == LocationStatus.DUPLICATE) duplicates++;
         }
         return new Coverage(checked, positions.size() - duplicates);
+    }
+    /** Like coverage(), over storage locations only: whether any warehouse stock was actually read. */
+    public Coverage storageCoverage() {
+        int checked = 0, total = 0;
+        for (int i = 0; i < positions.size(); i++) {
+            if (kindOf(positions.get(i)) != ContainerKind.STORAGE) continue;
+            LocationStatus status = status(reports, i);
+            if (status == LocationStatus.DUPLICATE) continue;
+            total++; if (status == LocationStatus.CHECKED) checked++;
+        }
+        return new Coverage(checked, total);
     }
     /** Distinct locations without a CHECKED report, including ones not reported yet. */
     public int unchecked() { Coverage coverage = coverage(); return coverage.total() - coverage.checked(); }

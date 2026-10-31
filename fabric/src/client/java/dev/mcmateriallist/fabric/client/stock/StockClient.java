@@ -142,7 +142,12 @@ public final class StockClient {
     private static boolean observe(int index) {
         ContainerPosition position = scanned.positions().get(index);
         var value = StockObservations.of(scanned, position);
-        if (value == null) return false;
+        if (value == null) {
+            // The other half of an observed double chest: its items are in that observation already.
+            if (!StockObservations.covered(scanned, position)) return false;
+            if (ledger.accept(LocationReport.empty(index, LocationStatus.DUPLICATE, ContainerBlocks.kind(position.blockId())))) version++;
+            return true;
+        }
         boolean accepted = ledger.accept(new LocationReport(index, LocationStatus.OBSERVED, ContainerBlocks.kind(position.blockId()), value.counts()), value.at());
         if (accepted) { observed++; version++; }
         return accepted;

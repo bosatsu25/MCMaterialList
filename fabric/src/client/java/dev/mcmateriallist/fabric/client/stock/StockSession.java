@@ -64,23 +64,28 @@ public final class StockSession {
     public String info(String itemId) {
         var value = snapshot().orElse(null);
         if (value == null) return "";
-        String stock = value.coverage().checked() == 0 ? text("info.unchecked") : text("info.stock", value.confirmed(itemId));
+        // A checked hopper is not warehouse stock: without a checked storage location the stock is unknown, never 0.
+        String stock = value.storageCoverage().checked() == 0 ? text("info.unchecked") : text("info.stock", value.confirmed(itemId));
         List<String> extras = new ArrayList<>();
         var previous = value.previous(itemId);
         if (previous.locations() > 0) extras.add(text("info.previous", previous.count()));
         long machine = value.machine(itemId);
         if (machine > 0) extras.add(text("info.machines", machine));
+        var previousMachine = value.previousMachine(itemId);
+        if (previousMachine.locations() > 0) extras.add(text("info.previous_machines", previousMachine.count()));
         return stock + (extras.isEmpty() ? "" : " (" + String.join(", ", extras) + ")") + " · " + text("info.inventory", inventory(itemId));
     }
     /** The per-source breakdown for the row tooltip, or null without a check. */
     public String tooltip(String itemId) {
         var value = snapshot().orElse(null);
         if (value == null) return null;
-        var coverage = value.coverage(); var previous = value.previous(itemId);
+        var storage = value.storageCoverage(); var previous = value.previous(itemId); var previousMachine = value.previousMachine(itemId);
         List<String> parts = new ArrayList<>();
-        parts.add(coverage.checked() == 0 ? text("tooltip.unchecked_all") : text("tooltip.checked", value.confirmed(itemId), coverage.checked(), coverage.total()));
+        parts.add(storage.checked() == 0 ? text("tooltip.unchecked_all") : text("tooltip.checked", value.confirmed(itemId), storage.checked(), storage.total()));
         if (previous.locations() > 0) parts.add(text("tooltip.previous", previous.count(), previous.locations(), time(previous.oldest()), minutesAgo(previous.oldest())));
         parts.add(text("tooltip.machines", value.machine(itemId)));
+        if (previousMachine.locations() > 0)
+            parts.add(text("tooltip.previous_machines", previousMachine.count(), previousMachine.locations(), time(previousMachine.oldest()), minutesAgo(previousMachine.oldest())));
         parts.add(text("tooltip.inventory", inventory(itemId)));
         parts.add(text("tooltip.unchecked", value.unchecked()));
         return String.join(" | ", parts);

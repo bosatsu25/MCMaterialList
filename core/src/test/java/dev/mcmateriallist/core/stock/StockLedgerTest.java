@@ -113,4 +113,19 @@ class StockLedgerTest {
     }
 
     private static LocationReport checked(int index, String item, long count) { return new LocationReport(index, LocationStatus.CHECKED, ContainerKind.STORAGE, Map.of(item, count)); }
+
+    @Test void aCheckedMachineAloneLeavesStorageUncheckedAndMachineReadingsStaySeparate() {
+        var ledger = new StockLedger(clock); ledger.begin(profile);
+        // Only the hopper was read: warehouse stock is unknown, not 0.
+        assertTrue(ledger.accept(new LocationReport(2, LocationStatus.CHECKED, ContainerKind.MACHINE, Map.of(STONE, 5L))));
+        var snapshot = ledger.snapshot(world, profile).orElseThrow();
+        assertEquals(new StockSnapshot.Coverage(1, 5), snapshot.coverage()); assertEquals(new StockSnapshot.Coverage(0, 4), snapshot.storageCoverage());
+        ledger.complete();
+        // A later scan that cannot reach the hopper keeps its reading as a previous machine count, never as storage.
+        now[0] = start.plusSeconds(60); ledger.begin(profile);
+        assertTrue(ledger.accept(LocationReport.empty(2, LocationStatus.UNLOADED, ContainerKind.MACHINE)));
+        snapshot = ledger.snapshot(world, profile).orElseThrow();
+        assertEquals(5, snapshot.previousMachine(STONE).count()); assertEquals(1, snapshot.previousMachine(STONE).locations());
+        assertEquals(StockSnapshot.Previous.NONE, snapshot.previous(STONE)); assertEquals(0, snapshot.machine(STONE));
+    }
 }
