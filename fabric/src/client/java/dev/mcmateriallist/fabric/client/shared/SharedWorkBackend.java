@@ -79,7 +79,8 @@ public final class SharedWorkBackend {
     /** The detached local region copy, or null when this list is shared or original local work. */
     public SharedClientArchive.Detached detached() { return SharedWorkController.detached(entry, kind); }
     /** Sharing metadata cannot be read, so original local region editing is blocked (a detached copy might be hidden). */
-    public boolean metadataBlocked() { return SharedWorkController.metadataBlocked(entry); }
+    /** No entry (placement capacity or no identity) means its sharing metadata, and so any detached copy, is unknown. */
+    public boolean metadataBlocked() { return entry == null || SharedWorkController.metadataBlocked(entry); }
     public boolean canUnshare() { return controller.unshareReason(this) == null; }
     public boolean canRejoin() { return controller.rejoinReason(this) == null; }
     /** Null when Unshare regions is allowed; otherwise the translated reason. */

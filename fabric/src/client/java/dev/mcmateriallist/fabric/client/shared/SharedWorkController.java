@@ -74,7 +74,10 @@ public final class SharedWorkController {
     Entry attach(LocalPlacementId placement) {
         if (placement == null || closed) return null;
         Entry existing = entries.get(placement); if (existing != null) return existing;
-        // Native parent screens can retain their backend until closed. Never orphan a live entry.
+        // Native parent screens can retain their backend until closed. Never orphan a live entry; only an idle entry with
+        // nothing to replay, restore or hide is dropped, and it reloads from disk (detached copy included) when reopened.
+        if (entries.size() >= OPEN_PLACEMENTS) entries.values().stream().filter(this::evictable).findFirst()
+            .ifPresent(idle -> entries.remove(idle.placement));
         if (entries.size() >= OPEN_PLACEMENTS) return null;
         Entry entry = new Entry(placement); entries.put(placement, entry);
         service.load(placement).whenComplete((result, failure) -> later(() -> {
@@ -260,6 +263,14 @@ public final class SharedWorkController {
     /** Sharing metadata was loaded but cannot be read or trusted: a detached copy might be hidden in it. */
     static boolean metadataBlocked(Entry entry) {
         return entry != null && !entry.loading && entry.storage != StoreStatus.OK && entry.storage != StoreStatus.MISSING;
+    }
+    /** No live screen, no work in flight, no shared reference, no unresolved original and nothing hidden. */
+    private boolean evictable(Entry entry) {
+        if (entry.loading || saving(entry) || !entry.hidden.isEmpty()
+            || entry.backends.values().stream().anyMatch(held -> held.get() != null)) return false;
+        var archive = entry.archive;
+        return archive == null || (archive.materials().shared() == null && archive.regions().shared() == null
+            && archive.operations().stream().allMatch(operation -> operation.confirmation() != null));
     }
     /** P6: no save, confirmation, administration or open request for this placement. */
     private boolean saving(Entry entry) {
