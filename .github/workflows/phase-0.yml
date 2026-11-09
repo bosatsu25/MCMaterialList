@@ -16,9 +16,9 @@ jobs:
           distribution: microsoft
           java-version: '25'
       - run: chmod +x gradlew
-      - run: ./gradlew --no-daemon clean build
+      - run: ./gradlew --no-daemon --warning-mode all clean build
       - name: Real client restart with Location Files, shared transport and UI, isolated dedicated server, and two-client multiplayer
-        run: xvfb-run -a ./gradlew --no-daemon verifyPhase4 -PacceptMinecraftEula=true
+        run: xvfb-run -a ./gradlew --no-daemon --warning-mode all verifyPhase4 -PacceptMinecraftEula=true
       - uses: actions/upload-artifact@v4
         if: always()
         with:

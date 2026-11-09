@@ -22,4 +22,20 @@ public final class PlacementIdentity {
         }
         return id;
     }
+
+    /**
+     * Whether placement still holds exactly this identity without throwing: saved, file-backed, registered among
+     * activePlacements, carrying expected's UUID and not sharing it with another active placement (#14). Cheap enough
+     * for render-time readiness checks.
+     */
+    public static boolean holds(SchematicPlacement placement, Iterable<SchematicPlacement> activePlacements, LocalPlacementId expected) {
+        if (placement == null || activePlacements == null || expected == null) return false;
+        if (!placement.shouldBeSaved() || placement.getSchematicFile() == null || !expected.value().equals(placement.getHashId())) return false;
+        boolean registered = false;
+        for (SchematicPlacement other : activePlacements) {
+            if (other == placement) registered = true;
+            else if (expected.value().equals(other.getHashId())) return false;
+        }
+        return registered;
+    }
 }

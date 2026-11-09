@@ -64,6 +64,9 @@ public final class Phase2RegionClientTest implements FabricClientGameTest {
             }));
             context.waitFor(mc -> delivered.get() && !work.pending());
             context.runOnClient(mc -> check(((GuiBaseTestAccess) screen).phase0Buttons().stream().filter(candidate -> "Refresh work".equals(ChatFormatting.stripFormatting(((ButtonTestAccess) candidate).phase0Text()))).count() == 1, "Region callback duplicated toolbar"));
+            // Issue #14: pinned upstream Rendering duplicate, and a copied placement (same hash_code) failing safely.
+            UpstreamBoundaryEvidence.renderingDuplicate(context, screen, placement, work);
+            UpstreamBoundaryEvidence.duplicatePlacement(context, screen, placement, work, primary);
             check(!Files.exists(primary.resolveSibling("materials.json")), "Region tracking initialized materials");
             for (int region : new int[]{2, 6, 8, 9, 11}) {
                 click(context, context.computeOnClient(mc -> rowButton(screen, "Region " + region, RegionDoneButton.class))); idle(context, work);
