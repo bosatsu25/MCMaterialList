@@ -15,7 +15,7 @@ Only this exact combination is tested. Nothing else is claimed.
 | MaLiLib | 0.29.2 (Modrinth `52cWF5Da`) | `suggests: "=0.29.2"` (client only, optional) | `Compatibility.isSupported()` exact version string | `malilib_version`; same check |
 | Java | 25 (hosted CI: Microsoft OpenJDK 25 via `actions/setup-java`; Phase 0: Microsoft OpenJDK 25.0.4+7) | `depends: "java": ">=25"` | Fabric Loader | Gradle toolchain and `options.release = 25` |
 | Build only | Gradle 9.7.1, Loom 1.17.20 | - | - | wrapper, `fabric/build.gradle` |
-| Platforms with evidence | Hosted Ubuntu 24.04 with `xvfb-run` (every gate); Windows for the Phase 0-2 local runs | - | - | `.github/workflows/phase-0.yml` |
+| Platforms with evidence | Hosted Ubuntu 24.04 with `xvfb-run` (every gate, `verifyRelease`); Windows for the Phase 0-2 local runs; macOS not verified ([platform-verification.md](platform-verification.md)) | - | - | `.github/workflows/phase-0.yml` |
 
 Notes:
 

@@ -1,4 +1,4 @@
-name: Regression gates through Phase 4 (verifyPhase4)
+name: Release gate (verifyRelease = verifyPhase4 + JAR, license and translation checks)
 on:
   push:
   pull_request:
@@ -17,8 +17,11 @@ jobs:
           java-version: '25'
       - run: chmod +x gradlew
       - run: ./gradlew --no-daemon --warning-mode all clean build
-      - name: Real client restart with Location Files, shared transport and UI, isolated dedicated server, and two-client multiplayer
-        run: xvfb-run -a ./gradlew --no-daemon --warning-mode all verifyPhase4 -PacceptMinecraftEula=true
+      # verifyRelease runs every verifyPhase4 gate (real client restart with Location Files and Check Materials, shared
+      # transport and native UI, isolated dedicated server, two-client multiplayer with a restart, Unshare, Phase 5A traces)
+      # plus :fabric:verifyApplicationJar, :fabric:verifyDependencyLicenses and :fabric:verifyTranslations.
+      - name: Release gate (all Phase 0-4 gates, application JAR contents, dependency licenses, translations)
+        run: xvfb-run -a ./gradlew --no-daemon --warning-mode all verifyRelease -PacceptMinecraftEula=true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -39,3 +42,12 @@ jobs:
             fabric/build/run/multiplayer/consoles/*.log
             fabric/build/run/multiplayer/server/class-load-*.log
           if-no-files-found: ignore
+      # The application JAR that passed verifyApplicationJar on this exact head (the sources JAR is not a distribution).
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: application-jar
+          path: |
+            fabric/build/libs/fabric-*.jar
+            !fabric/build/libs/fabric-*-sources.jar
+          if-no-files-found: error

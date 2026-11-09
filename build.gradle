@@ -56,3 +56,12 @@ tasks.register('verifyPhase4') {
     description = 'Run every retained Phase 0-3 gate plus Phase 4A Location Files (real UI registration, cross-dimension refusal, fresh-process persistence) and Phase 4B Check Materials (server scan, authorization, fallback, budget) and Phase 4C Unshare regions (detached copy, replay gate, rejoin export) and Phase 5A observability (dedicated-server operation traces without private content).'
     dependsOn 'verifyPhase3', ':fabric:verifyLocationFiles', ':fabric:verifyStockScan', ':fabric:verifyUnshare', ':fabric:verifyPerformance'
 }
+// Issues #13 and #15: the release gate hosted CI runs. It keeps every Phase 0-4 gate (verifyPhase4) and names the
+// distribution checks explicitly, so the release head is checked even if a phase gate stops depending on them later:
+// the application JAR contents (license, notices, only the nested core, no test or optional-mod code, metadata
+// version = mod_version), the third-party licenses read from the pinned artifacts, and the en_us/ja_jp key parity.
+tasks.register('verifyRelease') {
+    group = 'verification'
+    description = 'Run the complete release gate: verifyPhase4 plus the application JAR, dependency license and translation checks.'
+    dependsOn 'verifyPhase4', ':fabric:verifyApplicationJar', ':fabric:verifyDependencyLicenses', ':fabric:verifyTranslations'
+}
