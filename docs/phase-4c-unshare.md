@@ -8,9 +8,9 @@ Issue #11 adds **Unshare regions**: turning one placement's shared region work i
 2. **Rejoin exports the detached edits.** Rejoin writes the copy to a file under `config/mcmateriallist/shared-client/detached/`, which an administrator can re-enter by hand. The app never reads that file back and never merges it.
 3. **Controls live in the existing Shared work screen, for REGIONS only.** They do not go on the native region toolbar, and materials have no unshare.
 
-## Strict defaults
+## Strict defaults (confirmed by the owner on 2026-11-09, #33)
 
-These were chosen for safety where the owner did not decide.
+The assistant first chose these for safety in PR #32. On 2026-11-09 the owner confirmed all three as the specification (#33), so they are no longer provisional.
 
 - **P3. Any unresolved REGIONS journal entry blocks Unshare,** whichever account or scope it came from. "Resolved" means the entry has a confirmation, which only a definitive server answer gives (#7). A disconnect never resolves one.
 - **P4. After a journal recovery, Unshare stays blocked** on that placement (`recoveredJournalUncertain`).
@@ -50,7 +50,32 @@ Rejoin is disabled while saving, without a compatible sharing server (the usual 
 - **Reconnect never rejoins.** Reconnect restoration, the confirmed-cache loop and the replay loop skip bindings without a shared reference, so a detached copy is left alone. Join and create refuse to select over a detached copy; only Rejoin replaces it.
 - **Rejoin** joins `detached.from` with the same source check as Join / synchronize, then calls `SharedClientService.rejoin`, which under the store lock writes `shared-client/detached/placement-<placement>-dataset-<copy>-g<generation>.json` in `DatasetJsonCodec` format and installs a fresh reference with the server snapshot. A failure between the two steps leaves the copy detached, and a retry rewrites the same export.
 
-The storage model, invariants I1-I5 and schema 3 are described in [the implementation spec](phase-4c-unshare-spec.md) and covered by `SharedClientUnshareTest` in core.
+## Storage model and invariants
+
+These are covered by `SharedClientUnshareTest` in core. The working spec they come from was removed after the implementation was merged (#35).
+
+- **Model.** `SharedClientArchive.Binding` has a `detached` field, a `Detached(RegionWorkDataset dataset, ProjectScope from)`. The 3-argument constructor keeps `detached = null`. `RegionDetachment.copy` builds the copy:
+  - definitions come from the manifest's regions;
+  - states are the server rows, unchanged;
+  - review markers are the server's reconfirmation set, restricted to regions;
+  - it has no archived work, and its generation is 0.
+- **I1.** A binding is in exactly one state:
+  - SHARED: `shared != null`, cache optional;
+  - DETACHED: `detached != null`, `shared == null`, `cache == null`;
+  - ORIGINAL: both null.
+
+  The materials binding is never DETACHED. The constructors enforce I1.
+- **I2.** The copy's dataset ID differs from the original local dataset and from the shared region list, and its placement equals the archive's placement.
+- **I3.** Unshare changes only the regions binding. The materials binding and the journal carry over unchanged, and the original `regions.json` is never touched.
+- **I4.** Unshare is purely local. It sends nothing to the server and does not change Placement ON/OFF, sub-region flags or other upstream state.
+- **I5.** Nothing ever merges. No path reads a detached copy into shared state, or shared state into a detached copy, after creation.
+- **Rebuilds.** Every rebuild of a `Binding` keeps `detached`, through `withCache`. That includes cache updates, `clearCaches` and the cache-free backup, so the backup keeps the detached copy.
+- **Schema 3.** `SharedClientStore.SCHEMA` is 3. A binding stores a detached flag and, when set, the source scope's four UUIDs plus a blob holding the copy as `DatasetJsonCodec` JSON.
+  - Schemas 1 and 2 are still read, and are rewritten as 3 on the next save.
+  - A future schema is refused and never overwritten.
+  - An older build reports UNSUPPORTED_SCHEMA for a file this build has saved.
+- **Size.** Because of I1, at most one large blob sits in each binding slot, so `MAX_BYTES` is unchanged. Each copy is limited to `SharedLimits.MESSAGE_BYTES` of JSON and to `DatasetJsonCodec.MAX_TASKS` tasks.
+- **Fault injection.** A package-private store `WriteHook` can inject failures at three points: before the export replace, before the backup replace and before the primary replace.
 
 ## Verification
 
