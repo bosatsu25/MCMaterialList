@@ -69,6 +69,8 @@ public final class LocalDatasetStore {
         } catch (UnsafePathException exception) { return StoreResult.failure(StoreStatus.INVALID_PATH); }
         catch (AtomicMoveNotSupportedException exception) { return StoreResult.failure(StoreStatus.ATOMIC_REPLACE_UNAVAILABLE); }
         catch (OverlappingFileLockException exception) { return StoreResult.failure(StoreStatus.BUSY); }
+        // An over-limit but valid dataset is refused and the previous files are left untouched (Phase 5A).
+        catch (CapacityExceededException exception) { return StoreResult.failure(StoreStatus.TOO_LARGE); }
         catch (IllegalArgumentException | ArithmeticException | DateTimeException exception) { return StoreResult.failure(StoreStatus.CORRUPT); }
         catch (IOException exception) { return StoreResult.failure(StoreStatus.IO_FAILURE); }
     }

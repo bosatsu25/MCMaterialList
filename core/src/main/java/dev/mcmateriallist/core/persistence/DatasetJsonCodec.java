@@ -25,6 +25,7 @@ import java.util.UUID;
 /** Explicit schema, strict scalar types, duplicate-field checks and bounded parsing. */
 public final class DatasetJsonCodec {
     public static final int SCHEMA = 1;
+    /** Active plus archived tasks. Encoding more is a bounded refusal (CapacityExceededException), not corruption. */
     public static final int MAX_TASKS = 4000;
     private final Gson gson = new GsonBuilder().disableHtmlEscaping().serializeNulls().create();
 
@@ -49,7 +50,7 @@ public final class DatasetJsonCodec {
             JsonArray review = new JsonArray(); regions.reviewRequired().stream().map(RegionTaskId::externalForm).sorted().forEach(review::add);
             root.add("reviewRequired", review);
         }
-        if (active.size() + archived.size() > MAX_TASKS) throw new IllegalArgumentException("Work dataset exceeds task limit");
+        if (active.size() + archived.size() > MAX_TASKS) throw new CapacityExceededException("Work dataset exceeds task limit");
         root.add("tasks", active); root.add("archived", archived); return gson.toJson(root) + "\n";
     }
 
