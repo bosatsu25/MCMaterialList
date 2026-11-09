@@ -26,12 +26,12 @@
 | --- | --- |
 | ワークフロー | `.github/workflows/phase-0.yml`、ジョブ `compatibility`（ubuntu-24.04、Microsoft OpenJDK 25、`xvfb-run`） |
 | 実行するゲート | `clean build`、続いて `verifyRelease -PacceptMinecraftEula=true`（`verifyPhase4` ＋ `verifyApplicationJar`、`verifyDependencyLicenses`、`verifyTranslations`） |
-| リリース対象のコミット | **記入待ち**（v0.1.0 のタグを付けるコミット） |
-| そのコミットの CI 実行 | **記入待ち**（実行 ID と結果。ジョブのない実行は数えない。[platform-verification.md](platform-verification.md#infrastructure-note-zero-job-workflow-failures-on-2026-11-09)） |
+| リリース対象のコミット | `d47082bd41179c65738d80869a168196e1ceede9`（main、#42 のスカッシュ。v0.1.0 のタグを付けるコミット） |
+| そのコミットの CI 実行 | [42695901338](https://github.com/bosatsu25/MCMaterialList/actions/runs/42695901338)：成功（ジョブ 1 件、Ubuntu 24.04、JDK 25。`clean build` と `verifyRelease` の両ステップが成功）。成果物 `application-jar`（ID 13709029194、zip の sha256 `ae871c1c9518726a8b78853e79c14fd951a5ac04b5c9ec8de5935450673803d5`）、`phase-4a-test-evidence`（ID 13709518802）。保持期限 2027-02-07 |
 | 証跡 | 成果物 `phase-4a-test-evidence`（core の JUnit XML、JaCoCo、スクリーンショット、各ゲートのログ）、`application-jar`（`fabric-0.1.0.jar`） |
 | ローカルの core テスト | 2026-11-09、JDK 25、JUnit Platform を直接実行：286 件、失敗 0、スキップ 0（fabric はこの環境ではビルドできない） |
 
-**#34 のクライアントテスト**（`Phase5GCoverageClientTest`、`SharedUiCoverageChecks`、`MultiplayerClientTest` の Location File）は、PR #41 の最終コミット 1641605 の CI（実行 42689396105 と 42689404128）で初めてコンパイル・実行され、すべてのマーカーが合格した。最初の実行では未ロードチャンクの拒否が失敗し、本番の不具合（`Level.hasChunkAt` がアンロード後も true）を見つけた。修正は同じ PR に含まれる。リリース対象のコミットの CI は、上の「記入待ち」の行に記録する。
+**#34 のクライアントテスト**（`Phase5GCoverageClientTest`、`SharedUiCoverageChecks`、`MultiplayerClientTest` の Location File）は、PR #41 の最終コミット 1641605 の CI（実行 42689396105 と 42689404128）で初めてコンパイル・実行され、すべてのマーカーが合格した。最初の実行では未ロードチャンクの拒否が失敗し、本番の不具合（`Level.hasChunkAt` がアンロード後も true）を見つけた。修正は同じ PR に含まれる。リリース対象のコミットの CI は上の表に記録した。
 
 ## AC-01〜AC-18
 
