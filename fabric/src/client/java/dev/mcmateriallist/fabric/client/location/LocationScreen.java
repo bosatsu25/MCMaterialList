@@ -16,6 +16,9 @@ import java.util.function.Consumer;
 public abstract class LocationScreen extends GuiBase {
     protected final LocationSession session;
     private final Map<ButtonGeneric, BooleanSupplier> gates = new LinkedHashMap<>();
+    /** Issue #22: why a gated control is disabled, and what to do next; the hover keeps the label first. */
+    private final Map<ButtonGeneric, java.util.function.Supplier<String>> reasons = new LinkedHashMap<>();
+    private final Map<ButtonGeneric, String> hovers = new LinkedHashMap<>();
     private int pending;
     private boolean rebuilding;
     private String feedbackKey;
@@ -31,15 +34,19 @@ public abstract class LocationScreen extends GuiBase {
         if (update.outcome() != null) report("outcome." + update.outcome().name());
         else report("storage", update.storage().status().name());
     }
-    @Override public void initGui() { super.initGui(); gates.clear(); }
+    @Override public void initGui() { super.initGui(); gates.clear(); reasons.clear(); hovers.clear(); }
     protected ButtonGeneric add(int x, int y, int width, String key, BooleanSupplier gate, Runnable action) {
         return add(x, y, width, LocationSession.text(key), LocationSession.text(key), gate, action);
     }
     protected ButtonGeneric add(int x, int y, int width, String label, String hover, BooleanSupplier gate, Runnable action) {
         var button = addButton(new ButtonGeneric(x, y, width, 20, MaterialPresentation.clamp(label, width - 8)), (source, mouse) -> action.run());
-        button.setHoverStrings(hover);
+        button.setHoverStrings(hover); hovers.put(button, hover);
         if (gate != null) { gates.put(button, gate); button.setEnabled(pending == 0 && gate.getAsBoolean()); }
         return button;
+    }
+    /** The reason (naming the next action) shown in the hover while the gated button is disabled. */
+    protected ButtonGeneric explain(ButtonGeneric button, java.util.function.Supplier<String> reason) {
+        reasons.put(button, reason); return button;
     }
     protected void back() { GuiBase.openGui(getParent()); }
     /** A result applies only while the issuing world/listener is current; the write itself is already durable either way. */
@@ -59,7 +66,13 @@ public abstract class LocationScreen extends GuiBase {
     protected String clamp(String value) { return MaterialPresentation.clamp(value, getScreenWidth() - 24); }
     @Override protected void drawContents(GuiContext ctx, int mouseX, int mouseY, float ticks) {
         super.drawContents(ctx, mouseX, mouseY, ticks);
-        gates.forEach((button, gate) -> button.setEnabled(pending == 0 && gate.getAsBoolean()));
+        gates.forEach((button, gate) -> {
+            boolean enabled = pending == 0 && gate.getAsBoolean();
+            var reason = reasons.get(button);
+            if (reason == null) button.setEnabled(enabled);
+            else dev.mcmateriallist.fabric.client.work.ActionReason.show(button, hovers.get(button), enabled,
+                () -> pending > 0 ? LocationSession.text("saving") : reason.get(), getScreenWidth());
+        });
         drawString(ctx, clamp(pending > 0 ? LocationSession.text("saving") : feedback), 12, 46, 0xFFFFCC55);
         if (!rebuilding && stale()) {
             rebuilding = true;

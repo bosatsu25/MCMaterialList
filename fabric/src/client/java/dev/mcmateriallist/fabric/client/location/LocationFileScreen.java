@@ -42,11 +42,12 @@ public final class LocationFileScreen extends LocationScreen {
         } else if (dirty && now instanceof LocationWorld.Available available) { dirty = false; load(available); }
         super.initGui();
         int width = Math.min(150, (getScreenWidth() - 28) / 2);
-        add(12, 64, width, "new", this::ready, () -> GuiBase.openGui(new LocationNameScreen(this, session, null, this::invalidate)));
-        add(16 + width, 64, width, "edit", () -> ready() && selected() != null,
-            () -> GuiBase.openGui(new LocationProfileEditScreen(this, session, shared, selected().id(), this::invalidate)));
+        explain(add(12, 64, width, "new", this::ready, () -> GuiBase.openGui(new LocationNameScreen(this, session, null, this::invalidate))), this::unavailable);
+        explain(add(16 + width, 64, width, "edit", () -> ready() && selected() != null,
+            () -> GuiBase.openGui(new LocationProfileEditScreen(this, session, shared, selected().id(), this::invalidate))),
+            () -> ready() ? LocationSession.text("reason.no_selection") : unavailable());
         if (current != null && current.selection().status() == StoreStatus.RECOVERY_REQUIRED)
-            add(12, 88, 2 * width + 4, confirmSelection ? "confirm_recovery" : "recover_selection", this::ready, this::recoverSelection);
+            explain(add(12, 88, 2 * width + 4, confirmSelection ? "confirm_recovery" : "recover_selection", this::ready, this::recoverSelection), this::unavailable);
         int top = 116, rows = Math.max(1, (getScreenHeight() - top - 36) / 24), recoverWidth = 100;
         List<ProfileEntry> list = entries == null ? List.of() : entries;
         int pages = Math.max(1, (list.size() + rows - 1) / rows); page = Math.min(page, pages - 1);
@@ -55,14 +56,21 @@ public final class LocationFileScreen extends LocationScreen {
             boolean recoverable = entry.status() == StoreStatus.RECOVERY_REQUIRED;
             int rowWidth = getScreenWidth() - 24 - (recoverable ? recoverWidth + 4 : 0);
             String label = row(entry);
-            add(12, y, rowWidth, label, label, () -> ready() && entry.status() == StoreStatus.OK, () -> select(entry.id()));
-            if (recoverable) add(16 + rowWidth, y, recoverWidth, entry.id().equals(confirmRecovery) ? "confirm_recovery" : "recover",
-                this::ready, () -> recover(entry.id()));
+            explain(add(12, y, rowWidth, label, label, () -> ready() && entry.status() == StoreStatus.OK, () -> select(entry.id())),
+                () -> !ready() ? unavailable() : LocationSession.text(recoverable ? "reason.row_recovery" : "reason.row_unreadable"));
+            if (recoverable) explain(add(16 + rowWidth, y, recoverWidth, entry.id().equals(confirmRecovery) ? "confirm_recovery" : "recover",
+                this::ready, () -> recover(entry.id())), this::unavailable);
         }
         add(12, getScreenHeight() - 30, 90, "back", null, this::back);
         if (pages > 1) add(110, getScreenHeight() - 30, 90, "next", null, () -> { page = (page + 1) % pages; initGui(); });
     }
     private boolean ready() { return world instanceof LocationWorld.Available && entries != null && !pending(); }
+    /** Why ready() is false: the world's reason, a failed listing, or still reading. */
+    private String unavailable() {
+        if (LocationWorld.resolve() instanceof LocationWorld.Unavailable now) return LocationSession.text("reason." + now.reason().name());
+        if (listStatus != null && entries == null) return LocationSession.text("reason.list_unreadable", listStatus.name());
+        return LocationSession.text("saving");
+    }
     private String row(ProfileEntry entry) {
         var profile = entry.profile();
         if (entry.status() == StoreStatus.RECOVERY_REQUIRED) return LocationSession.text("row_recovery", profile.displayName());

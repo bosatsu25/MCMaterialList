@@ -32,17 +32,17 @@ public final class LocationProfileEditScreen extends LocationScreen {
         }
         super.initGui();
         int width = Math.min(150, (getScreenWidth() - 28) / 2);
-        add(12, 64, width, "add", () -> profile != null, this::register);
-        add(16 + width, 64, width, "rename", () -> profile != null, () -> GuiBase.openGui(new LocationNameScreen(this, session, profile, this::reload)));
-        if (profile != null && profile.binding() != null) add(12, 88, 2 * width + 4, "unbind", () -> profile != null, this::unbind);
-        else add(12, 88, 2 * width + 4, "bind", this::bindable, this::bind);
+        explain(add(12, 64, width, "add", () -> profile != null, this::register), this::unavailable);
+        explain(add(16 + width, 64, width, "rename", () -> profile != null, () -> GuiBase.openGui(new LocationNameScreen(this, session, profile, this::reload))), this::unavailable);
+        if (profile != null && profile.binding() != null) explain(add(12, 88, 2 * width + 4, "unbind", () -> profile != null, this::unbind), this::unavailable);
+        else explain(add(12, 88, 2 * width + 4, "bind", this::bindable, this::bind), this::unbindable);
         List<ContainerPosition> positions = profile == null ? List.of() : profile.positions();
         int rows = Math.max(1, (getScreenHeight() - TOP - 36) / ROW), removeWidth = 70;
         int pages = Math.max(1, (positions.size() + rows - 1) / rows); page = Math.min(page, pages - 1);
         for (int i = page * rows; i < Math.min(positions.size(), (page + 1) * rows); i++) {
             var position = positions.get(i);
-            add(getScreenWidth() - 12 - removeWidth, TOP + (i - page * rows) * ROW, removeWidth, LocationSession.text("remove"),
-                LocationSession.text("remove_hover", describe(position)), () -> profile != null, () -> remove(position));
+            explain(add(getScreenWidth() - 12 - removeWidth, TOP + (i - page * rows) * ROW, removeWidth, LocationSession.text("remove"),
+                LocationSession.text("remove_hover", describe(position)), () -> profile != null, () -> remove(position)), this::unavailable);
         }
         add(12, getScreenHeight() - 30, 90, "back", null, this::back);
         if (pages > 1) add(110, getScreenHeight() - 30, 90, "next", null, () -> { page = (page + 1) % pages; initGui(); });
@@ -84,6 +84,19 @@ public final class LocationProfileEditScreen extends LocationScreen {
     private boolean bindable() {
         var scope = scope();
         return profile != null && scope != null && scope.worldNamespace().equals(profile.world().namespace()) && !scope.equals(profile.binding());
+    }
+    /** Issue #22: why the profile controls are disabled (the profile could not be read), with the next action. */
+    private String unavailable() {
+        return LocationWorld.resolve() instanceof LocationWorld.Unavailable now ? LocationSession.text("reason." + now.reason().name())
+            : LocationSession.text("reason.profile_unavailable");
+    }
+    /** Why Bind is disabled: no readable profile, no shared project on this list, another world, or already bound. */
+    private String unbindable() {
+        var scope = scope();
+        if (profile == null) return unavailable();
+        if (scope == null) return LocationSession.text("reason.bind_not_shared");
+        if (!scope.worldNamespace().equals(profile.world().namespace())) return LocationSession.text("outcome.WORLD_MISMATCH");
+        return LocationSession.text("reason.bind_already");
     }
     private void bind() {
         var scope = scope(); var now = here(); if (now == null || scope == null) return;

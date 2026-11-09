@@ -4,7 +4,7 @@ This integration build connects the accepted [shared authority](SHARED_PROTOCOL.
 
 ## Use local or shared work deliberately
 
-Opening a saved placement reads existing local/shared metadata without creating work or selecting a server project. Local Track/Refresh, notes, archives, recovery, ordinary Phase 0 clicks and Shift-click diagnostics retain their prior behavior.
+Opening a saved placement reads existing local/shared metadata without creating work or selecting a server project. Local Track/Refresh, notes, archives, recovery, and the footer entry retain their behavior; since Issue #22 the footer opens the MCMaterialList screen and the Shift-click diagnostic needs `-Dmcmateriallist.diagnostics=true`.
 
 1. On a compatible server, select **Share** in the native material list or placement configuration.
 2. To create, keep the placement and all original regions enabled, use all layers and unmodified original region transforms, then complete a fresh upstream material count. Select **New project...**, enter a name and **Create empty work**. The manifest captures all material types and original region definitions; initial assignments, notes and completion are empty. No local rows are uploaded or silently imported.

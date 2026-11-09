@@ -4,6 +4,10 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.mcmateriallist.core.LocalPlacementId;
 import dev.mcmateriallist.fabric.client.litematica.PlacementIdentity;
+import dev.mcmateriallist.fabric.client.work.WorkHubScreen;
+import dev.mcmateriallist.core.persistence.StoreStatus;
+import dev.mcmateriallist.core.ui.WorkStatePresentation;
+import dev.mcmateriallist.core.work.DatasetKind;
 import dev.mcmateriallist.fabric.test.mixin.ButtonTestAccess;
 import dev.mcmateriallist.fabric.test.mixin.GuiBaseTestAccess;
 import dev.mcmateriallist.fabric.test.mixin.MessageRendererTestAccess;
@@ -55,7 +59,11 @@ public final class Phase0ClientTest implements FabricClientGameTest {
                 verifyPlacementUi(context, placement, scale);
                 verifyMaterialUi(context, placement, scale);
             }
+            verifyJapaneseHub(context, placement);
             context.setScreen(() -> null);
+            verifyNothingWritten(context, placement);
+            // Issue #22: every ordinary footer click above opened the MCMaterialList screen, never a placeholder message.
+            org.slf4j.LoggerFactory.getLogger("mcmateriallist").info("Phase 5E footer opens MCMaterialList screen PASS");
             context.runOnClient(mc -> saveRestartFixture(placement));
         } catch (IOException exception) {
             throw new AssertionError("Phase 0 fixture I/O failed", exception);
@@ -113,7 +121,7 @@ public final class Phase0ClientTest implements FabricClientGameTest {
         context.runOnClient(mc -> checkLayout(screen, button));
         context.takeScreenshot("placement-scale-" + scale);
         click(context, button);
-        context.runOnClient(mc -> checkPhase0Message(screen));
+        verifyHub(context, screen, "placement-hub-scale-" + scale);
         context.takeScreenshot("placement-click-scale-" + scale);
         // Major existing screen operations: toggles reinitialize the GUI.
         boolean enabled = placement.isEnabled();
@@ -145,7 +153,7 @@ public final class Phase0ClientTest implements FabricClientGameTest {
         context.runOnClient(mc -> checkLayout(screen, button));
         context.takeScreenshot("materials-scale-" + scale);
         click(context, button);
-        context.runOnClient(mc -> checkPhase0Message(screen));
+        verifyHub(context, screen, "materials-hub-scale-" + scale);
         boolean hidden = materials.getHideAvailable();
         click(context, context.computeOnClient(mc -> findButtonContaining(screen, "Hide available:")));
         context.runOnClient(mc -> {
@@ -223,12 +231,88 @@ public final class Phase0ClientTest implements FabricClientGameTest {
         context.getInput().pressMouse(GLFW.GLFW_MOUSE_BUTTON_LEFT);
     }
 
-    private static void checkPhase0Message(GuiBase screen) {
+    /**
+     * Issue #22: an ordinary click on the footer button opens the MCMaterialList screen for that list (not a placeholder
+     * message), whose controls fit the GUI without overlapping and whose wrapped status lines fit its width; Back returns.
+     */
+    private static void verifyHub(ClientGameTestContext context, GuiBase parent, String screenshot) {
+        context.waitForScreen(WorkHubScreen.class);
+        WorkHubScreen hub = context.computeOnClient(mc -> (WorkHubScreen) mc.gui.screen());
+        context.waitFor(mc -> !hub.lines().isEmpty());
+        context.runOnClient(mc -> {
+            checkPlaceholderAbsent(parent);
+            checkHub(hub, mc.font);
+            boolean materials = hub.kind() == DatasetKind.MATERIALS;
+            check(materials == (parent instanceof GuiMaterialList), "MCMaterialList screen opened for the wrong list");
+            // A local singleplayer fixture is never presented as shared work or as a failure.
+            check(java.util.Set.of(WorkStatePresentation.State.LOCAL, WorkStatePresentation.State.WAITING, WorkStatePresentation.State.SYNCING)
+                .contains(hub.state()), "Local fixture shown in an unexpected state: " + hub.state());
+            String state = WorkHubScreen.text("state", WorkHubScreen.text("state." + hub.state().name()));
+            check(state.startsWith(hub.lines().getFirst()), "MCMaterialList screen does not lead with the work state");
+            String shared = WorkHubScreen.text(materials ? "shared" : "shared_regions");
+            check(((GuiBaseTestAccess) (Object) hub).phase0Buttons().stream().anyMatch(button -> button.getHoverStrings().contains(shared)),
+                "MCMaterialList screen offers no path to Shared work");
+            if (materials) {
+                var work = ((dev.mcmateriallist.fabric.client.material.MaterialWorkScreen) parent).mcmateriallist$session();
+                for (String label : List.of(work.refreshLabel(), work.location().label(), work.stock().label()))
+                    check(((GuiBaseTestAccess) (Object) hub).phase0Buttons().stream().anyMatch(button -> button.getHoverStrings().contains(label)),
+                        "MCMaterialList screen lacks the action: " + label);
+            }
+        });
+        context.takeScreenshot(screenshot);
+        click(context, context.computeOnClient(mc -> findButton(hub, WorkHubScreen.text("back"))));
+        context.waitFor(mc -> mc.gui.screen() == parent);
+    }
+
+    private static void checkHub(WorkHubScreen hub, net.minecraft.client.gui.Font font) {
+        var buttons = ((GuiBaseTestAccess) (Object) hub).phase0Buttons();
+        check(buttons.size() >= 3, "MCMaterialList screen has no actions");
+        for (ButtonBase button : buttons) {
+            check(button.getX() >= 0 && button.getY() >= 0 && button.getX() + button.getWidth() <= hub.getScreenWidth()
+                && button.getY() + button.getHeight() <= hub.getScreenHeight(), "MCMaterialList screen control outside the GUI");
+            for (ButtonBase other : buttons) if (other != button) check(!overlaps(button, other), "MCMaterialList screen controls overlap");
+            check(!button.getHoverStrings().isEmpty(), "MCMaterialList screen control without an explanation");
+        }
+        int top = buttons.stream().mapToInt(ButtonBase::getY).min().orElseThrow();
+        check(30 + hub.lines().size() * 10 <= top, "MCMaterialList status text runs into its controls");
+        for (String line : hub.lines()) check(font.width(line) <= hub.getScreenWidth() - 24, "MCMaterialList status line wider than the GUI: " + line);
+    }
+
+    private static void checkPlaceholderAbsent(GuiBase screen) {
         var renderer = ((GuiBaseTestAccess) screen).phase0MessageRenderer();
         boolean found = ((MessageRendererTestAccess) renderer).phase0Messages().stream()
             .flatMap(message -> ((MessageTestAccess) message).phase0Lines().stream())
-            .anyMatch(line -> line.contains("MCMaterialList Phase 0"));
-        check(found, "Mouse click produced no Phase 0 feedback");
+            .anyMatch(line -> line.contains("MCMaterialList Phase 0") || line.contains("MCMaterialList Phase 1"));
+        check(!found, "Ordinary click still produced the Phase 0 placeholder or the developer diagnostic");
+    }
+
+    /** Japanese at GUI scale 4: the same screen still fits, wraps and leads with the translated state. */
+    private static void verifyJapaneseHub(ClientGameTestContext context, SchematicPlacement placement) {
+        context.runOnClient(mc -> { mc.options.guiScale().set(4); mc.resizeGui(); });
+        GuiBase screen = context.computeOnClient(mc -> new GuiPlacementConfiguration(placement));
+        UiParityEvidence.language(context, screen, "ja_jp");
+        try {
+            context.runOnClient(mc -> check(WorkHubScreen.text("back").equals("戻る"), "Japanese MCMaterialList screen translation unavailable"));
+            click(context, context.computeOnClient(mc -> findButton(screen, "MCMaterialList")));
+            verifyHub(context, screen, "placement-hub-japanese-scale-4");
+        } finally {
+            UiParityEvidence.language(context, screen, "en_us");
+        }
+    }
+
+    /** Opening the native screens and the MCMaterialList screen only reads: no local work was created for the fixture. */
+    private static void verifyNothingWritten(ClientGameTestContext context, SchematicPlacement placement) {
+        LocalPlacementId id = context.computeOnClient(mc -> PlacementIdentity.get(placement, DataManager.getSchematicPlacementManager().getAllSchematicsPlacements()));
+        for (DatasetKind kind : DatasetKind.values()) {
+            var stored = context.computeOnClient(mc -> dev.mcmateriallist.fabric.client.MCMaterialListClient.work().load(id, kind));
+            try {
+                check(stored.get(10, java.util.concurrent.TimeUnit.SECONDS).status() == StoreStatus.MISSING, "Ordinary clicks created " + kind + " work");
+            } catch (InterruptedException failure) {
+                Thread.currentThread().interrupt(); throw new AssertionError(failure);
+            } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException failure) {
+                throw new AssertionError("Local work could not be read", failure);
+            }
+        }
     }
 
     private static Path fixtureRoot() {

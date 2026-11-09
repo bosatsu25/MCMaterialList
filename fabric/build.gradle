@@ -65,6 +65,22 @@ loom.runs {
     }
 }
 tasks.named('runClientGameTestRestore') { mustRunAfter tasks.named('runClientGameTest') }
+// Issue #22: in the first client process an ordinary footer click must open the MCMaterialList screen (scales 1-4 and
+// Japanese), and the Phase 1 diagnostic must write nothing without -Dmcmateriallist.diagnostics=true and still run with it.
+// Checked here, before the fresh restore process replaces latest.log.
+tasks.named('runClientGameTest') {
+    doFirst { ext.productEntryStartedMillis = System.currentTimeMillis() }
+    doLast {
+        def log = layout.buildDirectory.file('run/clientGameTest/logs/latest.log').get().asFile
+        if (!log.exists() || log.lastModified() < productEntryStartedMillis || log.text.contains('Client gametests failed with an exception')) {
+            throw new GradleException('The first client gametest process produced no current passing log; inspect the client gametest log.')
+        }
+        def text = log.text
+        ['Phase 5E footer opens MCMaterialList screen PASS', 'Phase 5E diagnostic requires explicit flag PASS'].each { marker ->
+            if (!text.contains(marker)) throw new GradleException("Phase 5E product entry did not reach: ${marker}")
+        }
+    }
+}
 tasks.register('verifyClientRestart') {
     group = 'verification'
     description = 'Test both GUIs, then restore the same placement in a fresh Minecraft process.'
@@ -224,6 +240,25 @@ tasks.register('verifyIsolation') {
     }
 }
 tasks.named('check') { dependsOn 'verifyIsolation' }
+
+// Issue #22: both shipped languages carry exactly the same keys, with the same number of %s arguments per key.
+tasks.register('verifyTranslations') {
+    group = 'verification'
+    def languages = fileTree('src/client/resources/assets/mcmateriallist/lang') { include '*.json' }
+    inputs.files languages
+    doLast {
+        def parsed = languages.files.collectEntries { file -> [(file.name): new groovy.json.JsonSlurper().parse(file, 'UTF-8')] }
+        def english = parsed['en_us.json'], japanese = parsed['ja_jp.json']
+        if (english == null || japanese == null) throw new GradleException('en_us.json or ja_jp.json is missing.')
+        if (english.keySet() != japanese.keySet()) {
+            throw new GradleException("Translation keys differ: only en_us ${english.keySet() - japanese.keySet()}, only ja_jp ${japanese.keySet() - english.keySet()}")
+        }
+        english.each { key, value ->
+            if (value.count('%s') != japanese[key].count('%s')) throw new GradleException("Translation arguments differ for ${key}")
+        }
+    }
+}
+tasks.named('check') { dependsOn 'verifyTranslations' }
 
 // Dedicated focused transport mod, excluded from the application archive.
 sourceSets {

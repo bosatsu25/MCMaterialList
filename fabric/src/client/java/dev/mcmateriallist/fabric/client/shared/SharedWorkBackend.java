@@ -39,6 +39,22 @@ public final class SharedWorkBackend {
     public long version() { return entry == null ? 0 : entry.version; }
     public boolean writable() { return controller.writable(this); }
     public String feedback() { return text(controller.reason(this)); }
+    /** Issue #22: the untranslated key of feedback() (below mcmateriallist.shared.), for grouping into a visible state. */
+    public String reasonKey() { return controller.reason(this); }
+    /**
+     * Issue #22: why real-time sharing is or is not available on the current server, independent of any list's selection.
+     * Only a negotiated compatible protocol reads as supported; nothing here claims that work was saved or shared.
+     */
+    public static String serverSharing() {
+        return text(switch (SharedClientNetworking.state().status()) {
+            case UNAVAILABLE -> "server_unavailable";
+            case UNSUPPORTED -> "protocol_unsupported";
+            case DISCONNECTED -> "disconnected";
+            case NEGOTIATING -> "negotiating";
+            case CAPACITY -> "capacity";
+            default -> "server_supported";
+        });
+    }
     public String taskFeedback(TaskId task, TaskCommand intent) {
         String reason = controller.reason(this);
         var snapshot = snapshot();

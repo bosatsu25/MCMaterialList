@@ -13,6 +13,8 @@ import java.util.List;
 public final class SharedWorkScreen extends GuiBase {
     private final SharedWorkBackend backend;
     private final List<ButtonGeneric> requests = new ArrayList<>();
+    /** Issue #22: the complete label of each control, kept first in its hover when a disabled reason is added. */
+    private final java.util.Map<ButtonGeneric, String> labels = new java.util.HashMap<>();
     private long version = -1;
     private Object projects;
     private int page;
@@ -29,7 +31,7 @@ public final class SharedWorkScreen extends GuiBase {
     }
     @Override public void initGui() {
         boolean confirmed = definitionConfirmed(), regionsConfirmed = regionsConfirmed();
-        super.initGui(); requests.clear(); local = membership = definition = regions = null; version = backend.version(); projects = SharedClientNetworking.state().projects();
+        super.initGui(); requests.clear(); labels.clear(); local = membership = definition = regions = null; version = backend.version(); projects = SharedClientNetworking.state().projects();
         int gap = 4, width = Math.min(150, (getScreenWidth() - 28) / 2);
         discover = add(12, 64, width, "discover", backend::discover); requests.add(discover);
         requests.add(add(16 + width, 64, width, "create", () -> GuiBase.openGui(new SharedInputScreen(this, backend, SharedInputScreen.Mode.CREATE, null))));
@@ -76,6 +78,7 @@ public final class SharedWorkScreen extends GuiBase {
                 MaterialPresentation.clamp(SharedWorkBackend.text("join", project.name()), getScreenWidth() - 36)),
                 (source, mouse) -> backend.join(project.scope()));
             button.setHoverStrings(SharedWorkBackend.text("join", project.name())); requests.add(button);
+            labels.put(button, SharedWorkBackend.text("join", project.name()));
         }
         add(12, getScreenHeight() - 30, 90, "back", () -> GuiBase.openGui(getParent()));
         if (pages > 1) add(110, getScreenHeight() - 30, 90, "next", () -> { page = (page + 1) % pages; initGui(); });
@@ -83,7 +86,19 @@ public final class SharedWorkScreen extends GuiBase {
     private ButtonGeneric add(int x, int y, int width, String key, Runnable action) {
         String label = SharedWorkBackend.text(key);
         var button = addButton(new ButtonGeneric(x, y, width, 20, MaterialPresentation.clamp(label, width - 8)), (source, mouse) -> action.run());
-        button.setHoverStrings(label); return button;
+        button.setHoverStrings(label); labels.put(button, label); return button;
+    }
+    private void reason(ButtonGeneric button, boolean enabled, String reason) {
+        // The definition control explains what it does even while enabled; disabled, the reason follows that text.
+        if (button == definition) {
+            var hover = new ArrayList<String>(); hover.add(labels.get(button));
+            hover.addAll(dev.mcmateriallist.fabric.client.work.ActionReason.wrap(SharedWorkBackend.text("definition_explanation"), getScreenWidth()));
+            if (!enabled) hover.addAll(dev.mcmateriallist.fabric.client.work.ActionReason.wrap(reason, getScreenWidth()));
+            button.setEnabled(enabled);
+            if (!hover.equals(button.getHoverStrings())) button.setHoverStrings(hover.toArray(String[]::new));
+            return;
+        }
+        dev.mcmateriallist.fabric.client.work.ActionReason.show(button, labels.get(button), enabled, () -> reason, getScreenWidth());
     }
     private DefinitionConfirmation definitionContext() {
         var snapshot = backend.snapshot();
@@ -106,8 +121,12 @@ public final class SharedWorkScreen extends GuiBase {
         boolean rejoin = backend.detached() != null;
         String blocked = rejoin ? backend.rejoinFeedback() : backend.unshareFeedback();
         regions.setEnabled(blocked == null);
-        regions.setHoverStrings(SharedWorkBackend.text(rejoin ? "rejoin_explanation" : "unshare_explanation"),
-            blocked != null ? blocked : SharedWorkBackend.text(confirmRegions != null ? "confirm_hint" : rejoin ? "rejoin" : "unshare"));
+        // Issue #22: the explanation and the reason (with its next action) are wrapped so the tooltip stays readable.
+        var hover = new ArrayList<>(dev.mcmateriallist.fabric.client.work.ActionReason.wrap(
+            SharedWorkBackend.text(rejoin ? "rejoin_explanation" : "unshare_explanation"), getScreenWidth()));
+        hover.addAll(dev.mcmateriallist.fabric.client.work.ActionReason.wrap(
+            blocked != null ? blocked : SharedWorkBackend.text(confirmRegions != null ? "confirm_hint" : rejoin ? "rejoin" : "unshare"), getScreenWidth()));
+        if (!hover.equals(regions.getHoverStrings())) regions.setHoverStrings(hover.toArray(String[]::new));
     }
     private boolean definitionConfirmed() {
         if (confirmDefinition != null && !confirmDefinition.equals(definitionContext())) confirmDefinition = null;
@@ -133,11 +152,16 @@ public final class SharedWorkScreen extends GuiBase {
         boolean supported = SharedClientNetworking.state().capabilities() != null
             && SharedClientNetworking.state().capabilities().protocolVersion() == dev.mcmateriallist.core.shared.protocol.SharedProtocol.VERSION;
         // Create and project joins would replace a detached copy; only Rejoin shared regions may (#11).
-        requests.forEach(button -> button.setEnabled(supported && !backend.pending() && (button == discover || backend.detached() == null)));
+        // Issue #22: every disabled control keeps its label and adds why, and what to do next.
+        String busy = SharedWorkBackend.text("saving");
+        for (var button : requests) {
+            String reason = !supported ? SharedWorkBackend.serverSharing() : backend.pending() ? busy : SharedWorkBackend.text("detached_rejoin_required");
+            reason(button, supported && !backend.pending() && (button == discover || backend.detached() == null), reason);
+        }
         regionsHover();
-        if (membership != null) membership.setEnabled(backend.administer());
-        if (definition != null) definition.setEnabled(backend.canUpdateDefinition());
-        if (local != null) local.setEnabled(!backend.pending());
+        if (membership != null) reason(membership, backend.administer(), backend.pending() ? busy : SharedWorkBackend.text("administrator_required"));
+        if (definition != null) reason(definition, backend.canUpdateDefinition(), backend.pending() ? busy : SharedWorkBackend.text("definition_unavailable"));
+        if (local != null) reason(local, !backend.pending(), busy);
         if (!rebuilding && (version != backend.version() || projects != SharedClientNetworking.state().projects())) {
             rebuilding = true;
             mc.schedule(() -> { rebuilding = false; if (mc.gui.screen() == this) initGui(); });

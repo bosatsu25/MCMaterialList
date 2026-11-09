@@ -14,7 +14,7 @@ Progress counts all current tracked material types and floors the percentage. Up
 
 Storage work uses the existing serial I/O service and strict atomic snapshot store. Buttons cannot publish optimistic completion. A failure retains the last confirmed view, disables editing and displays a typed status. A newly opened corrupt dataset never presents its backup as current. **Recover backup** first explains possible loss of the latest action; **Confirm recovery** explicitly restores the previous-good snapshot while preserving damaged data. Refresh work reloads a conflict; future-schema and corrupt data never initialize blank work.
 
-Only the material snapshot is used by these controls. The Phase 0 footer and Phase 1 Shift-click diagnostic remain available; that separate diagnostic intentionally refreshes both datasets. No work is written into `.litematic`. Phase 2A added no product networking, telemetry, stock scanning or region controls; the region extension is documented below.
+Only the material snapshot is used by these controls. The footer button now opens the MCMaterialList screen (Issue #22, see the README); the Phase 1 Shift-click diagnostic, which intentionally refreshes both datasets, runs only with the developer flag `-Dmcmateriallist.diagnostics=true`. No work is written into `.litematic`. Phase 2A added no product networking, telemetry, stock scanning or region controls; the region extension is documented below.
 
 ## Integration
 
@@ -53,7 +53,7 @@ The first PR CI run exposed a Phase 1 restart fixture collision: all tests used 
 
 ## Phase 2B region behavior and integration
 
-Opening placement configuration reads region work without writing. **Track regions** explicitly creates missing work; **Refresh work** reconciles exact original schematic keys, relative origins and signed sizes. Capture and refresh are region-only and do not require an initialized/completed material calculation, nor read, initialize or rewrite material work. The separate Phase 1 Shift-click diagnostic still deliberately refreshes both datasets.
+Opening placement configuration reads region work without writing. **Track regions** explicitly creates missing work; **Refresh work** reconciles exact original schematic keys, relative origins and signed sizes. Capture and refresh are region-only and do not require an initialized/completed material calculation, nor read, initialize or rewrite material work. The separate Phase 1 Shift-click diagnostic still deliberately refreshes both datasets, but only with the developer flag `-Dmcmateriallist.diagnostics=true` (Issue #22).
 
 Rows retain this order: fixed 16px assignee face, upstream schematic L icon, clamped region name, one notice, complete/undo, Configure, Placement ON/OFF. The face overlay and green/red action are separate. Completion follows the existing local transition rules and never changes counts, placement/render flags or schematic bytes. **Regions built** includes all current tracked definitions, even when placements are disabled; percentages floor. Hide Done and upstream natural ordering/search only change the view. Show Info updates both drawing and the erased upstream height method used for row creation/space/hits.
 
