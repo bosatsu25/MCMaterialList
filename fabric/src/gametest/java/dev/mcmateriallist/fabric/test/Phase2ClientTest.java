@@ -91,6 +91,8 @@ public final class Phase2ClientTest implements FabricClientGameTest {
             });
             context.waitFor(mc -> delivered.get() && !session.pending());
             context.runOnClient(mc -> check(((GuiBaseTestAccess) screen).phase0Buttons().stream().filter(candidate -> "Refresh work".equals(ChatFormatting.stripFormatting(((ButtonTestAccess) candidate).phase0Text()))).count() == 1, "Asynchronous load duplicated toolbar"));
+            // Issue #14: a copied placement (same hash_code) appearing while the screen is open fails safely and says why.
+            UpstreamBoundaryEvidence.duplicateMaterialPlacement(context, screen, placement, session, primary);
             context.runOnClient(mc -> {
                 sortByCount(screen, materials);
                 check(materials.getMaterialsAll().stream().allMatch(row -> row.getCountMissing() == row.getCountTotal() && row.getCountAvailable() == 0), "Fixture counts differ from Missing=Total, Available=0");

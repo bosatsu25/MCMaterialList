@@ -84,9 +84,14 @@ public final class MaterialWorkSession {
     public TaskState state(MaterialTaskId id) { return shared.selected() ? shared.state(id) : confirmed == null ? null : confirmed.states().get(id); }
     public Progress progress() { return shared.selected() ? shared.progress() : confirmed == null ? null : confirmed.progress(); }
     public boolean ready() {
-        return placement != null && MCMaterialListClient.work() != null
+        return identityHolds() && MCMaterialListClient.work() != null
             && screen.getMaterialList() instanceof MaterialReadiness readiness && readiness.mcmateriallist$ready()
             && !TaskScheduler.getInstanceClient().hasTask(TaskCountBlocksPlacement.class);
+    }
+    /** The list's owner still holds this screen's identity: saved, file-backed, registered and not shared by a copy (#14). */
+    private boolean identityHolds() {
+        return placement != null && PlacementIdentity.holds(PlacementWorkAdapter.owner(screen.getMaterialList()),
+            DataManager.getSchematicPlacementManager().getAllSchematicsPlacements(), placement);
     }
     public boolean writable() { return shared.selected() ? shared.writable() : !pending && !shared.loading() && ready() && status == StoreStatus.OK && confirmed != null; }
     public boolean allowed(MaterialTaskId id, TaskCommand intent) {
@@ -94,6 +99,9 @@ public final class MaterialWorkSession {
     }
     public String feedback() {
         if (shared.loading() || shared.selected()) return shared.feedback();
+        // No saved, registered, unique placement identity (unsaved, temporary, duplicated, removed or not a placement list):
+        // say so instead of blaming work storage or the material calculation (#14). Writes are refused through ready().
+        if (!identityHolds()) return dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("placement_unavailable");
         if (pending) return text("saving");
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return text("storage", status.name());
         return !ready() ? text("waiting") : status == StoreStatus.OK ? text("local") : text("untracked");
