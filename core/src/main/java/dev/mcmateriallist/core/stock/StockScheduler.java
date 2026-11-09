@@ -19,12 +19,18 @@ public final class StockScheduler {
         default void served(int containers, long nanos) {}
     }
     public record Stats(int maxContainers, long maxNanos) {}
+    /**
+     * Phase 5A measurements since creation. maxStepNanos is the longest single container step: a container is read atomically
+     * (both halves of a double chest in one step), so a tick can exceed the nano budget by at most about one step.
+     * overBudgetTicks counts ticks whose total exceeded the nano budget; ticks counts ticks that stepped at least one container.
+     */
+    public record StepStats(long maxStepNanos, long overBudgetTicks, long ticks) {}
     private final int containers;
     private final long nanos;
     private final LongSupplier clock;
     private final ArrayDeque<Job> jobs = new ArrayDeque<>();
     private int maxContainers;
-    private long maxNanos;
+    private long maxNanos, maxStepNanos, overBudgetTicks, busyTicks;
 
     public StockScheduler() { this(StockLimits.CONTAINERS_PER_TICK, StockLimits.NANOS_PER_TICK, System::nanoTime); }
     public StockScheduler(int containers, long nanos, LongSupplier clock) {
@@ -42,13 +48,18 @@ public final class StockScheduler {
             if (used > 0 && clock.getAsLong() - start >= nanos) break;
             Job job = jobs.poll();
             if (job.done()) continue;
+            long before = clock.getAsLong();
             job.step(); used++; served.add(job);
+            maxStepNanos = Math.max(maxStepNanos, clock.getAsLong() - before);
             if (!job.done()) jobs.add(job);
         }
         long elapsed = Math.max(0, clock.getAsLong() - start);
         maxContainers = Math.max(maxContainers, used); maxNanos = Math.max(maxNanos, elapsed);
+        if (elapsed > nanos) overBudgetTicks++;
+        if (used > 0) busyTicks++;
         for (Job job : served) job.served(used, elapsed);
         return used;
     }
     public Stats stats() { return new Stats(maxContainers, maxNanos); }
+    public StepStats stepStats() { return new StepStats(maxStepNanos, overBudgetTicks, busyTicks); }
 }

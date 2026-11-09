@@ -1,6 +1,7 @@
 package dev.mcmateriallist.core.shared.client;
 
 import dev.mcmateriallist.core.LocalPlacementId;
+import dev.mcmateriallist.core.persistence.CapacityExceededException;
 import dev.mcmateriallist.core.persistence.DatasetJsonCodec;
 import dev.mcmateriallist.core.shared.*;
 import dev.mcmateriallist.core.shared.protocol.*;
@@ -86,7 +87,7 @@ final class SharedClientCodec {
         if (binding.detached() != null) {
             scope(out, binding.detached().from());
             byte[] json = new DatasetJsonCodec().encode(binding.detached().dataset()).getBytes(StandardCharsets.UTF_8);
-            if (json.length > SharedLimits.MESSAGE_BYTES) throw new IllegalArgumentException("Detached copy capacity");
+            if (json.length > SharedLimits.MESSAGE_BYTES) throw new CapacityExceededException("Detached copy capacity");
             blob(out, json);
         }
     }
@@ -135,7 +136,7 @@ final class SharedClientCodec {
     private static void uuid(DataOutputStream out, UUID id) throws IOException { out.writeLong(id.getMostSignificantBits()); out.writeLong(id.getLeastSignificantBits()); }
     private static UUID uuid(DataInputStream in) throws IOException { return new UUID(in.readLong(), in.readLong()); }
     private static final class LimitedBytes extends ByteArrayOutputStream {
-        private void check(int length) { if (length < 0 || length > MAX_BYTES - count) throw new IllegalArgumentException("Client state capacity"); }
+        private void check(int length) { if (length < 0 || length > MAX_BYTES - count) throw new CapacityExceededException("Client state capacity"); }
         @Override public synchronized void write(int value) { check(1); super.write(value); }
         @Override public synchronized void write(byte[] bytes, int offset, int length) { check(length); super.write(bytes, offset, length); }
     }

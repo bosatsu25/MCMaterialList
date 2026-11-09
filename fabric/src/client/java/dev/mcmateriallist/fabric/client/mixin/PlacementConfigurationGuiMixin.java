@@ -26,6 +26,8 @@ public abstract class PlacementConfigurationGuiMixin extends GuiListBase<SubRegi
     private void reserveWork(CallbackInfoReturnable<Integer> callback) { callback.setReturnValue(Math.max(0, callback.getReturnValue() - (mcmateriallist$session().compact() ? 0 : 66))); }
     @Inject(method = "initGui()V", at = @At("HEAD"), require = 1)
     private void positionBrowser(CallbackInfo callback) {
+        // Rows are rebuilt below; they must observe the placement afresh (Phase 5A render-path cache).
+        mcmateriallist$session().invalidateObservation();
         int y = mcmateriallist$session().compact() ? 62 : 86;
         if (getListY() != y) {
             var view = dev.mcmateriallist.fabric.client.work.WorkListViewState.capture(getListWidget());

@@ -16,6 +16,7 @@ public final class SharedProjectService implements AutoCloseable {
     public record Ready(StoreStatus status, UUID worldNamespace) {}
     private final SharedProjectStore store;
     private final Clock clock;
+    private final SharedDiagnostics.Sink diagnostics;
     private final ThreadPoolExecutor worker;
     private final CompletableFuture<Ready> ready = new CompletableFuture<>();
     private final CompletableFuture<Void> drained = new CompletableFuture<>();
@@ -28,9 +29,12 @@ public final class SharedProjectService implements AutoCloseable {
     private volatile StoreStatus storageStatus = StoreStatus.MISSING;
     private volatile boolean initialized;
     private volatile boolean closed;
-    public SharedProjectService(SharedProjectStore store) { this(store, Clock.systemUTC()); }
-    public SharedProjectService(SharedProjectStore store, Clock clock) {
-        this.store = Objects.requireNonNull(store); this.clock = Objects.requireNonNull(clock);
+    public SharedProjectService(SharedProjectStore store) { this(store, Clock.systemUTC(), SharedDiagnostics.NONE); }
+    public SharedProjectService(SharedProjectStore store, Clock clock) { this(store, clock, SharedDiagnostics.NONE); }
+    /** diagnostics receives one §13 trace per executed or refused operation, on the worker (or submitting) thread; keep it cheap. */
+    public SharedProjectService(SharedProjectStore store, SharedDiagnostics.Sink diagnostics) { this(store, Clock.systemUTC(), diagnostics); }
+    public SharedProjectService(SharedProjectStore store, Clock clock, SharedDiagnostics.Sink diagnostics) {
+        this.store = Objects.requireNonNull(store); this.clock = Objects.requireNonNull(clock); this.diagnostics = Objects.requireNonNull(diagnostics);
         worker = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(SharedLimits.QUEUED_WORK),
             runnable -> { Thread thread = new Thread(runnable, "mcmateriallist-shared-store"); thread.setDaemon(false); return thread; }) {
             @Override protected void terminated() { drained.complete(null); }
@@ -56,7 +60,7 @@ public final class SharedProjectService implements AutoCloseable {
         } catch (RuntimeException exception) { storageStatus = StoreStatus.IO_FAILURE; ready.complete(new Ready(storageStatus, null)); }
     }
     public CompletionStage<Reply<ProjectSnapshot>> create(UUID actor, UUID expectedWorld, String name, SharedManifest.Definition definition) {
-        return submit(() -> {
+        return submit(snapshotTrace(SharedDiagnostics.Operation.CREATE, null, "Create" + sizes(definition)), () -> {
             if (!initialized) return Reply.of(Status.UNAVAILABLE, null);
             if (actor == null || !world.equals(expectedWorld)) return Reply.of(Status.DENIED, null);
             if (reservedProjectIds.size() >= SharedLimits.PROJECTS) return Reply.of(Status.CAPACITY, null);
@@ -71,14 +75,15 @@ public final class SharedProjectService implements AutoCloseable {
         }, Reply.of(Status.CAPACITY, null), Reply.of(Status.CLOSED, null), definitionBudget(definition));
     }
     public CompletionStage<Reply<List<ProjectSummary>>> discover(UUID actor, UUID expectedWorld) {
-        return submit(() -> {
+        return submit((reply, queued, duration) -> new SharedDiagnostics.Trace(SharedDiagnostics.Operation.DISCOVER, null, null, null, "Discover",
+            reply == null ? null : reply.status(), -1, -1, -1, queued, duration), () -> {
             if (!initialized) return Reply.of(Status.UNAVAILABLE, null);
             if (actor == null || !world.equals(expectedWorld)) return Reply.of(Status.DENIED, null);
             synchronized (publication) { return Reply.of(Status.OK, summaries(actor)); }
         }, Reply.of(Status.CAPACITY, null), Reply.of(Status.CLOSED, null));
     }
     public CompletionStage<Reply<ProjectSnapshot>> join(UUID actor, ProjectScope scope) {
-        return submit(() -> {
+        return submit(snapshotTrace(SharedDiagnostics.Operation.JOIN, scope == null ? null : scope.projectId(), "Join"), () -> {
             Current current = current(scope);
             if (current.archive() == null) return Reply.of(current.status(), null);
             ProjectSnapshot snapshot = current.archive().snapshot();
@@ -87,14 +92,15 @@ public final class SharedProjectService implements AutoCloseable {
     }
     public CompletionStage<Outcome> command(UUID actor, SharedCommand command) {
         Objects.requireNonNull(command);
-        return submit(() -> apply(actor, command), rejected(command, Status.CAPACITY), rejected(command, Status.CLOSED),
+        return submit(commandTrace(command), () -> apply(actor, command), rejected(command, Status.CAPACITY), rejected(command, Status.CLOSED),
             512 + (command.intent() instanceof SharedCommand.SetNote note ? note.note().getBytes(java.nio.charset.StandardCharsets.UTF_8).length : 0));
     }
     public CompletionStage<Reply<ProjectSnapshot>> setViewer(UUID actor, ProjectScope scope, long expectedRevision, UUID target, boolean grant) {
         return setMembership(actor, scope, expectedRevision, target, grant ? ProjectRole.VIEWER : null);
     }
     public CompletionStage<Reply<ProjectSnapshot>> setMembership(UUID actor, ProjectScope scope, long expectedRevision, UUID target, ProjectRole role) {
-        return submit(() -> {
+        return submit(snapshotTrace(SharedDiagnostics.Operation.MEMBERSHIP, scope == null ? null : scope.projectId(),
+            "Membership(" + (role == null ? "REMOVE" : role.name()) + ")"), () -> {
             Current current = current(scope);
             if (current.archive() == null) return Reply.of(current.status(), null);
             ProjectArchive archive = current.archive(); ProjectSnapshot before = archive.snapshot();
@@ -117,7 +123,7 @@ public final class SharedProjectService implements AutoCloseable {
     }
     public CompletionStage<Reply<ProjectSnapshot>> updateManifest(UUID actor, ProjectScope scope, long expectedRevision, long expectedManifest,
                                                                   SharedManifest.Definition definition) {
-        return submit(() -> {
+        return submit(snapshotTrace(SharedDiagnostics.Operation.MANIFEST, scope == null ? null : scope.projectId(), "Manifest" + sizes(definition)), () -> {
             Current current = current(scope);
             if (current.archive() == null) return Reply.of(current.status(), null);
             ProjectArchive archive = current.archive(); ProjectSnapshot before = archive.snapshot();
@@ -276,28 +282,59 @@ public final class SharedProjectService implements AutoCloseable {
     private static Outcome rejected(SharedCommand command, Status status) {
         return new Outcome(new CommandResult(command.scope(), command.operationId(), status, 0, null), List.of());
     }
-    private <T> CompletionStage<T> submit(Supplier<T> operation, T full, T closed) {
-        return submit(operation, full, closed, 256);
+    private <T> CompletionStage<T> submit(Describe<T> describe, Supplier<T> operation, T full, T closed) {
+        return submit(describe, operation, full, closed, 256);
+    }
+    /** Builds the §13 trace of one operation; value is null when the operation threw. */
+    @FunctionalInterface private interface Describe<T> { SharedDiagnostics.Trace trace(T value, long queuedNanos, long durationNanos); }
+    private static Describe<Reply<ProjectSnapshot>> snapshotTrace(SharedDiagnostics.Operation operation, UUID project, String intent) {
+        return (reply, queued, duration) -> {
+            ProjectSnapshot snapshot = reply == null ? null : reply.value();
+            return new SharedDiagnostics.Trace(operation, snapshot != null ? snapshot.scope().projectId() : project, null, null, intent,
+                reply == null ? null : reply.status(), snapshot == null ? -1 : snapshot.projectRevision(), -1,
+                snapshot == null || operation != SharedDiagnostics.Operation.MANIFEST ? -1 : snapshot.manifest().version(), queued, duration);
+        };
+    }
+    private static Describe<Outcome> commandTrace(SharedCommand command) {
+        return (outcome, queued, duration) -> new SharedDiagnostics.Trace(SharedDiagnostics.Operation.COMMAND, command.scope().projectId(),
+            command.taskId(), command.operationId(), SharedDiagnostics.intent(command.intent()), outcome == null ? null : outcome.result().status(),
+            outcome == null ? -1 : outcome.result().projectRevision(), outcome == null || outcome.result().row() == null ? -1 : outcome.result().row().rowVersion(),
+            -1, queued, duration);
+    }
+    /** Row counts only; never names, keys or quantities. */
+    private static String sizes(SharedManifest.Definition definition) {
+        return definition == null ? "" : "(materials=" + definition.materials().size() + ",regions=" + definition.regions().size() + ")";
+    }
+    private <T> void trace(Describe<T> describe, T value, long queuedNanos, long durationNanos) {
+        try { diagnostics.trace(describe.trace(value, queuedNanos, durationNanos)); }
+        catch (RuntimeException ignored) { /* Diagnostics never change an authoritative result. */ }
     }
     /** Conservative serialized-input reservation, not a claim about Java heap object size. */
     private static int definitionBudget(SharedManifest.Definition definition) {
         if (definition == null) return 512;
         return 512 + definition.materials().size() * 268 + definition.regions().size() * 4124;
     }
-    private <T> CompletionStage<T> submit(Supplier<T> operation, T full, T closed, int bytes) {
+    private <T> CompletionStage<T> submit(Describe<T> describe, Supplier<T> operation, T full, T closed, int bytes) {
         CompletableFuture<T> result = new CompletableFuture<>();
-        if (worker.isShutdown()) return CompletableFuture.completedFuture(closed).minimalCompletionStage();
+        if (worker.isShutdown()) { trace(describe, closed, 0, 0); return CompletableFuture.completedFuture(closed).minimalCompletionStage(); }
         int previous;
         do {
             previous = admittedBytes.get();
-            if (bytes > SharedLimits.QUEUED_BYTES - previous) return CompletableFuture.completedFuture(full).minimalCompletionStage();
+            if (bytes > SharedLimits.QUEUED_BYTES - previous) { trace(describe, full, 0, 0); return CompletableFuture.completedFuture(full).minimalCompletionStage(); }
         } while (!admittedBytes.compareAndSet(previous, previous + bytes));
+        long admitted = System.nanoTime();
         try { worker.execute(() -> {
-            try { result.complete(operation.get()); }
-            catch (RuntimeException exception) { result.completeExceptionally(exception); }
+            long started = System.nanoTime(); T value = null; RuntimeException failure = null;
+            try { value = operation.get(); }
+            catch (RuntimeException exception) { failure = exception; }
             finally { admittedBytes.addAndGet(-bytes); }
+            // Trace before completion, so a caller that observes the reply also observes its trace.
+            trace(describe, value, started - admitted, System.nanoTime() - started);
+            if (failure == null) result.complete(value); else result.completeExceptionally(failure);
         }); }
-        catch (RejectedExecutionException exception) { admittedBytes.addAndGet(-bytes); result.complete(worker.isShutdown() ? closed : full); }
+        catch (RejectedExecutionException exception) {
+            admittedBytes.addAndGet(-bytes); T refused = worker.isShutdown() ? closed : full; trace(describe, refused, 0, 0); result.complete(refused);
+        }
         return result.minimalCompletionStage();
     }
     /** Stop accepting work immediately; drain in the background. Await this off Minecraft tick threads. */

@@ -37,6 +37,17 @@ public final class RegionWorkSession {
     private int toolbarStart, toolbarWidth, toolbarY;
     private long sharedVersion = -1;
     private boolean sharedRebuild;
+    /**
+     * Phase 5A: render paths (row construction, Hide Done filtering, Done enablement and hover feedback) reuse one native
+     * observation for at most one client tick and drop it on every rebuild, and resolve row names through an immutable index.
+     * ready(), refresh, commands and acknowledgement still capture fresh definitions at command time.
+     */
+    private static final long OBSERVATION_NANOS = 50_000_000L;
+    private PlacementWorkAdapter.Capture observed;
+    private long observedAt;
+    private int observedPlacements = -1;
+    private dev.mcmateriallist.core.ui.RegionRowIndex index;
+    private Object indexed;
     public RegionWorkSession(GuiPlacementConfiguration screen) {
         this.screen = screen;
         var capture = PlacementWorkAdapter.captureRegions(screen.getSchematicPlacement());
@@ -82,16 +93,37 @@ public final class RegionWorkSession {
     /** Resolve by exact original descriptor; ambiguity remains unavailable, never guessed. */
     public RegionTaskId id(String key) {
         var view = view();
-        if (view.source() == Source.SHARED) return shared.region(key);
+        if (view.source() == Source.SHARED) {
+            var snapshot = shared.snapshot(); observed();
+            if (index == null || indexed != snapshot) { index = shared.regionIndex(); indexed = snapshot; }
+            return index.id(key);
+        }
         if (view.dataset() == null) return null;
-        var capture = PlacementWorkAdapter.captureRegions(screen.getSchematicPlacement());
+        var capture = observed();
         if (capture.status() != PlacementWorkAdapter.Status.OK) return null;
-        var descriptors = capture.snapshot().regions().stream().filter(region -> region.key().equals(key)).toList();
-        if (descriptors.size() != 1) return null;
-        var matches = view.dataset().definitions().values().stream().filter(definition -> definition.descriptor().equals(descriptors.getFirst())).toList();
-        return matches.size() == 1 ? matches.getFirst().id() : null;
+        if (index == null || indexed != view.dataset()) {
+            index = dev.mcmateriallist.core.ui.RegionRowIndex.forDataset(capture.snapshot().regions(), view.dataset()); indexed = view.dataset();
+        }
+        return index.id(key);
     }
     private PlacementWorkAdapter.Capture capture() { return PlacementWorkAdapter.captureRegions(screen.getSchematicPlacement()); }
+    /** The render-path observation: reused within one client tick, then (and after a rebuild) captured again. */
+    private PlacementWorkAdapter.Capture observed() {
+        long now = System.nanoTime();
+        // A placement added or removed (for example a duplicate copy, #14) can change this placement's identity at once.
+        int placements = fi.dy.masa.litematica.data.DataManager.getSchematicPlacementManager().getAllSchematicsPlacements().size();
+        if (observed == null || now - observedAt >= OBSERVATION_NANOS || placements != observedPlacements) {
+            observed = capture(); observedAt = now; observedPlacements = placements; index = null; indexed = null;
+        }
+        return observed;
+    }
+    /** Rebuild boundary (screen init): the next render-path query observes the placement again. */
+    public void invalidateObservation() { observed = null; index = null; indexed = null; }
+    private boolean observedReady() {
+        if (placement == null || MCMaterialListClient.work() == null) return false;
+        var capture = observed();
+        return capture.status() == PlacementWorkAdapter.Status.OK && placement.equals(capture.snapshot().placementId());
+    }
     public boolean ready() {
         if (placement == null || MCMaterialListClient.work() == null) return false;
         var capture = capture();
@@ -101,9 +133,9 @@ public final class RegionWorkSession {
         return switch (view().source()) {
             case SHARED -> shared.writable();
             // Purely local: the journal never blocks it and nothing is sent (#11).
-            case DETACHED -> !pending && ready() && shared.detachedWritable();
+            case DETACHED -> !pending && observedReady() && shared.detachedWritable();
             // Unreadable sharing metadata might hide a detached copy, so the original is not edited behind it.
-            case LOCAL -> !pending && !shared.loading() && !shared.metadataBlocked() && ready() && status == StoreStatus.OK && confirmed != null;
+            case LOCAL -> !pending && !shared.loading() && !shared.metadataBlocked() && observedReady() && status == StoreStatus.OK && confirmed != null;
         };
     }
     public boolean writable(RegionTaskId id) {
@@ -119,7 +151,7 @@ public final class RegionWorkSession {
         if (shared.metadataBlocked()) return shared.feedback();
         if (pending) return text("saving");
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return text("storage", status.name());
-        return !ready() ? text("waiting") : status == StoreStatus.OK ? text("local") : text("untracked");
+        return !observedReady() ? text("waiting") : status == StoreStatus.OK ? text("local") : text("untracked");
     }
     /** Issue #22: the state the MCMaterialList screen shows, from the same branches as feedback(). */
     public dev.mcmateriallist.core.ui.WorkStatePresentation.State state() {
@@ -131,7 +163,7 @@ public final class RegionWorkSession {
         if (shared.metadataBlocked()) return dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
         if (pending) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.SYNCING;
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.SAVE_FAILURE;
-        return !ready() ? dev.mcmateriallist.core.ui.WorkStatePresentation.State.WAITING : dev.mcmateriallist.core.ui.WorkStatePresentation.State.LOCAL;
+        return !observedReady() ? dev.mcmateriallist.core.ui.WorkStatePresentation.State.WAITING : dev.mcmateriallist.core.ui.WorkStatePresentation.State.LOCAL;
     }
     /**
      * feedback(), except that unreadable sharing metadata (or the sharing view limit) also says why original region
@@ -150,19 +182,20 @@ public final class RegionWorkSession {
         if (status == StoreStatus.RECOVERY_REQUIRED) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.recover");
         if (status == StoreStatus.CONFLICT) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.conflict");
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.storage");
-        if (!ready()) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.region_waiting");
+        if (!observedReady()) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.region_waiting");
         return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text(status == StoreStatus.OK ? "next_action.region_local" : "next_action.region_track");
     }
     /** Track regions before original local work exists, else Refresh work. */
     public String refreshLabel() { return text(!shared.selected() && !detached() && status == StoreStatus.MISSING ? "track" : "refresh"); }
     public boolean refreshEnabled() {
         return !shared.loading() && switch (view().source()) {
-            case SHARED -> !shared.pending() && ready();
+            case SHARED -> !shared.pending() && observedReady();
             case DETACHED -> writable();
-            case LOCAL -> !pending && !shared.metadataBlocked() && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT);
+            case LOCAL -> !pending && !shared.metadataBlocked() && observedReady() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT);
         };
     }
     public void toolbar() {
+        invalidateObservation();
         if (!loaded && ready()) { loaded = true; await(MCMaterialListClient.work().load(placement, DatasetKind.REGIONS), this::publish); }
         toolbarStart = compact() ? 18 + screen.getStringWidth(fi.dy.masa.malilib.util.StringUtils.translate("litematica.gui.label.schematic_placement.sub_regions", screen.getSchematicPlacement().getSubRegionCount())) : 12;
         int end = compact() ? ((GuiButtonsAccess) screen).mcmateriallist$buttons().stream().filter(button -> button.getY() == 44 && button.getX() > toolbarStart)
@@ -204,7 +237,7 @@ public final class RegionWorkSession {
             String next = nextAction();
             return next == null ? stateReason() : stateReason() + " " + dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next", next);
         }, screen.getScreenWidth());
-        if (recoverButton != null) recoverButton.setEnabled(!pending && !shared.loading() && ready());
+        if (recoverButton != null) recoverButton.setEnabled(!pending && !shared.loading() && observedReady());
     }
     public void footer(GuiContext ctx) {
         if (!sharedRebuild && sharedVersion != shared.version()) {
@@ -228,9 +261,11 @@ public final class RegionWorkSession {
         if (shared.loading()) return;
         if (shared.selected()) { shared.refresh(); return; }
         if (detached()) {
-            if (!writable()) return;
-            var observed = capture().snapshot().regions();
-            detachedEdit(copy -> copy.reconcile(observed).dataset(), null);
+            // Fresh definitions at command time, never the render-path observation.
+            var current = capture();
+            if (!writable() || current.status() != PlacementWorkAdapter.Status.OK || !placement.equals(current.snapshot().placementId())) return;
+            var regions = current.snapshot().regions();
+            detachedEdit(copy -> copy.reconcile(regions).dataset(), null);
             return;
         }
         if (pending || !ready() || shared.metadataBlocked()) return;

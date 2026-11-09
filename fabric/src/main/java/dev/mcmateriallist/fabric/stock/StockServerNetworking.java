@@ -248,8 +248,11 @@ public final class StockServerNetworking {
         }
         StockMessage.Done done(Active active, StockMessage.Outcome outcome) {
             StockScan.Summary summary = active.scan == null ? new StockScan.Summary(0, 0, 0, 0, true) : active.scan.summary();
-            LOG.info("Stock scan {} reports={} checked={} positions={} maxContainersPerTick={} maxNanosPerTick={}", outcome, summary.reports(),
-                summary.checked(), active.request.positions().size(), summary.maxContainersPerTick(), summary.maxNanosPerTick());
+            // Counts and timings only, never item ids or quantities. Step statistics are scheduler-wide since start (Phase 5A).
+            StockScheduler.StepStats steps = scheduler.stepStats();
+            LOG.info("Stock scan {} reports={} checked={} positions={} maxContainersPerTick={} maxNanosPerTick={} maxStepNanos={} overBudgetTicks={} busyTicks={}",
+                outcome, summary.reports(), summary.checked(), active.request.positions().size(), summary.maxContainersPerTick(), summary.maxNanosPerTick(),
+                steps.maxStepNanos(), steps.overBudgetTicks(), steps.ticks());
             return new StockMessage.Done(active.request.requestId(), outcome, summary.reports(), summary.checked(), summary.maxContainersPerTick(), summary.maxNanosPerTick());
         }
         /** Pending and undrained positions are never reported; the client keeps them unchecked. */

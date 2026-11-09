@@ -75,6 +75,12 @@ public final class SharedWorkBackend {
         return snapshot.manifest().regions().entrySet().stream().filter(region -> region.getValue().equals(descriptors.getFirst()))
             .map(java.util.Map.Entry::getKey).findFirst().orElse(null);
     }
+    /** Phase 5A: one capture and one pass answering region(key) for every row of this observation. */
+    public dev.mcmateriallist.core.ui.RegionRowIndex regionIndex() {
+        var snapshot = snapshot(); var current = capture(false);
+        if (snapshot == null || !current.ok()) return dev.mcmateriallist.core.ui.RegionRowIndex.EMPTY;
+        return dev.mcmateriallist.core.ui.RegionRowIndex.forManifest(current.source().regions(), snapshot.manifest().regions());
+    }
     public void command(TaskId task, TaskCommand command) { controller.command(this, task, command); }
     public void discover() { controller.discover(this); }
     public void create(String name) { controller.create(this, name); }

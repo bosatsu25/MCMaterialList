@@ -207,6 +207,8 @@ public final class SharedClientStore {
         return Result.failure(failure instanceof UnsafePathException ? StoreStatus.INVALID_PATH
             : failure instanceof AtomicMoveNotSupportedException ? StoreStatus.ATOMIC_REPLACE_UNAVAILABLE
             : failure instanceof OverlappingFileLockException ? StoreStatus.BUSY
+            // A valid archive over an explicit size/task limit is a bounded refusal; the previous files stay (Phase 5A).
+            : failure instanceof dev.mcmateriallist.core.persistence.CapacityExceededException ? StoreStatus.TOO_LARGE
             : failure instanceof IllegalArgumentException || failure instanceof ArithmeticException ? StoreStatus.CORRUPT : StoreStatus.IO_FAILURE);
     }
     private static final class UnsafePathException extends IOException {
