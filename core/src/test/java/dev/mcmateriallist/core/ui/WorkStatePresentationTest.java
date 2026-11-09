@@ -18,8 +18,8 @@ class WorkStatePresentationTest {
             Map.entry("detached", State.DETACHED),
             Map.entry("unknown_outcome", State.SYNCING),
             Map.entry("awaiting_result", State.SYNCING),
-            Map.entry("join_required", State.SYNCING),
-            Map.entry("recovered_uncertain", State.SYNCING),
+            Map.entry("join_required", State.ACTION_REQUIRED),
+            Map.entry("recovered_uncertain", State.ACTION_REQUIRED),
             Map.entry("disconnected", State.DISCONNECTED),
             Map.entry("server_unavailable", State.SHARING_UNAVAILABLE),
             Map.entry("protocol_unsupported", State.SHARING_UNAVAILABLE),
@@ -38,6 +38,14 @@ class WorkStatePresentationTest {
             Map.entry("wrong_world", State.ACTION_REQUIRED),
             // A source that could not be read or verified is not a confirmed mismatch.
             Map.entry("result.CONFLICT", State.ACTION_REQUIRED),
+            Map.entry("permissions_saved", State.ACTION_REQUIRED),
+            Map.entry("state_changed", State.ACTION_REQUIRED),
+            Map.entry("selection_changed", State.ACTION_REQUIRED),
+            Map.entry("unshare.join_required", State.ACTION_REQUIRED),
+            Map.entry("unshare.refresh_required", State.ACTION_REQUIRED),
+            Map.entry("unshare.recovered_uncertain", State.ACTION_REQUIRED),
+            Map.entry("unshare.unresolved_operations", State.SYNCING),
+            Map.entry("result.OK", State.SHARED),
             Map.entry("source.IO_FAILURE", State.ACTION_REQUIRED),
             Map.entry("source.TOO_LARGE", State.ACTION_REQUIRED),
             Map.entry("source.MISSING", State.ACTION_REQUIRED),
@@ -51,7 +59,8 @@ class WorkStatePresentationTest {
             "protocol_unsupported", "capacity", "request_failed", "request_unknown", "unknown_outcome", "awaiting_result",
             "saving_intent", "join_required", "local_storage_blocked", "viewer", "revoked", "placement_unavailable"));
         for (StoreStatus status : StoreStatus.values()) keys.add("storage." + status.name());
-        for (SharedEvents.Status status : SharedEvents.Status.values()) keys.add("result." + status.name());
+        // Every server answer except the confirmed OK itself (which leaves the list shared) is a non-success.
+        for (SharedEvents.Status status : SharedEvents.Status.values()) if (status != SharedEvents.Status.OK) keys.add("result." + status.name());
         for (String key : keys) assertNotEquals(State.SHARED, WorkStatePresentation.ofSharedReason(key), key);
     }
 

@@ -102,15 +102,20 @@ public final class MaterialWorkSession {
     public dev.mcmateriallist.core.ui.WorkStatePresentation.State state() {
         if (placement == null) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.ACTION_REQUIRED;
         if (shared.loading() || shared.selected()) return dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
+        // An unreadable sharing archive may hide a shared binding: never call the list local then.
+        if (shared.metadataBlocked()) return dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
         if (pending) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.SYNCING;
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.SAVE_FAILURE;
         return !ready() ? dev.mcmateriallist.core.ui.WorkStatePresentation.State.WAITING : dev.mcmateriallist.core.ui.WorkStatePresentation.State.LOCAL;
     }
     /** feedback(), except that a placement without a saved unique identity names that cause. */
-    public String stateReason() { return placement == null ? dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("placement_unavailable") : feedback(); }
+    public String stateReason() {
+        if (placement == null) return dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("placement_unavailable");
+        return !shared.loading() && !shared.selected() && shared.metadataBlocked() ? shared.feedback() : feedback();
+    }
     /** The next step where the reason text does not already name one; null otherwise. */
     public String nextAction() {
-        if (placement == null || shared.loading() || shared.selected() || pending) return null;
+        if (placement == null || shared.loading() || shared.selected() || shared.metadataBlocked() || pending) return null;
         if (status == StoreStatus.RECOVERY_REQUIRED) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.recover");
         if (status == StoreStatus.CONFLICT) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.conflict");
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.storage");

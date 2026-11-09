@@ -39,11 +39,14 @@ public final class WorkStatePresentation {
 
     private static final Set<String> NO_PERMISSION = Set.of("viewer", "revoked", "account_mismatch", "task_permission_required",
         "result.DENIED", "unshare.account_mismatch");
+    /**
+     * Only work still in progress, or an outcome not yet confirmed, is SYNCING. A settled reason that asks the user to
+     * join, retry, reopen or ask an Administrator (permissions_saved, join_required, state_changed, selection_changed,
+     * recovered_uncertain and their unshare.* forms) falls through to ACTION_REQUIRED.
+     */
     private static final Set<String> SYNCING = Set.of("loading", "saving", "negotiating", "discovering", "creating", "joining",
-        "saving_intent", "awaiting_result", "checking_source", "definition_requested", "permissions_requested", "permissions_saved",
-        "join_required", "unknown_outcome", "recovered_uncertain", "request_unknown", "state_changed", "selection_changed",
-        "result.OK", "unshare.unresolved_operations", "unshare.recovered_uncertain", "unshare.join_required",
-        "unshare.refresh_required", "unshare.saving", "unshare.state_changed");
+        "saving_intent", "awaiting_result", "checking_source", "definition_requested", "permissions_requested",
+        "unknown_outcome", "request_unknown", "unshare.unresolved_operations", "unshare.saving");
     private static final Set<String> DEFINITION = Set.of("baseline_mismatch", "definitions_mismatch", "source_reload_required",
         "source_edited", "full_recount_required");
     private static final Set<String> SAVE_FAILURE = Set.of("local_storage_blocked", "result.SAVE_FAILED", "result.UNAVAILABLE");
@@ -52,7 +55,8 @@ public final class WorkStatePresentation {
     /** The state for a shared/sharing reason key, as returned by the shared work controller. */
     public static State ofSharedReason(String key) {
         Objects.requireNonNull(key, "key");
-        if (key.equals("shared")) return State.SHARED;
+        // A server-confirmed save leaves the list shared.
+        if (key.equals("shared") || key.equals("result.OK")) return State.SHARED;
         if (NO_PERMISSION.contains(key)) return State.NO_PERMISSION;
         if (key.equals("detached") || key.equals("detached_rejoin_required")) return State.DETACHED;
         if (key.equals("local_preserved") || key.equals("unshare.not_shared")) return State.LOCAL;
