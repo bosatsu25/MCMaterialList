@@ -25,6 +25,8 @@ jobs:
           name: phase-4a-test-evidence
           path: |
             core/build/test-results/test/*.xml
+            core/build/reports/jacoco/test/jacocoTestReport.xml
+            core/build/reports/jacoco/test/html/**
             fabric/build/run/clientGameTest/screenshots/*.png
             fabric/build/phase0-fixture/phase2-region/expected-regions.json
             fabric/build/phase0-fixture/phase4/expected-location.json
