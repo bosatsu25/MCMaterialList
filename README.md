@@ -8,7 +8,19 @@ Open a saved placement's material list and select **Track materials** to start l
 
 **Refresh work** reconciles the latest completed upstream observation and preserves work. Definition changes show a notice; removed definitions are kept in read-only Archived work. Storage failure disables editing and retains the last confirmed view. Recovery requires **Recover backup**, then **Confirm recovery**, and may lose the last action. Material controls never create/change a region snapshot or alter `.litematic` files.
 
-The existing `MCMaterialList` footer buttons retain the Phase 0 message on ordinary clicks. **Shift-click** on either screen still runs the temporary Phase 1 diagnostic, explicitly creating/loading/refreshing both local datasets.
+## The MCMaterialList screen
+
+Click the `MCMaterialList` footer button on the material list or on placement configuration to open the **MCMaterialList** screen for that list (Issue #22). It shows:
+
+- the state of the list: local work, detached local copy, shared and synchronized, synchronizing or waiting for an unconfirmed result, waiting for Litematica, disconnected, real-time sharing unavailable on this server, no permission, schematic/placement differs from the shared project, read or save failure, or another action required;
+- the reason and the next step, whether this server supports MCMaterialList sharing, the work source (local, a shared project or the detached copy) and progress;
+- the actions **Track materials**/**Track regions** or **Refresh work**, **Shared work...** (on the region screen also **Unshare regions...**/**Rejoin shared regions...**), and on the material list **Location File** and **Check Materials**. **Back** returns to the list.
+
+Opening the screen only reads; only an explicitly labelled action writes. A disabled control on these screens, and on Shared work and Location Files, explains in its hover text why it is disabled and what to do next. A network failure or an unconfirmed result is never shown as saved or shared.
+
+The Phase 1 local work diagnostic, which creates and refreshes both local datasets, is a developer tool and not part of normal use. It runs only on **Shift-click** when the client JVM is started with `-Dmcmateriallist.diagnostics=true`; without that flag Shift-click is an ordinary click and writes nothing.
+
+## Region tracking
 
 Open placement configuration and select **Track regions** to explicitly create region work. Region controls read only the original schematic definitions and remain available independently of material counting. Faces open Claim/Release and explicit note saving; completion preserves Configure, Placement ON/OFF and upstream transforms. Hide Done filters the view while progress includes all tracked regions, including disabled placements. Standard modification and note reasons share one native notice bubble; deleting a note retains the standard reason.
 
@@ -22,7 +34,7 @@ Shared faces/details allow a Member to claim an unassigned task, complete it wit
 
 Total/Missing/Available, multiplier, Ignore, Hide Done and personal enabled-region counts remain local observations. They never change shared task definitions or progress denominators. Creating a project requires a fresh full count with every original region enabled and untransformed; normal refresh of an existing binding may display partial personal counts. A changed schematic source, dimension, placement origin/rotation/mirror or original region definition blocks shared task editing. A current Administrator can explicitly confirm **Update shared definition...** after a fresh full count and unchanged loaded source; this replaces global material and region definitions and the placement baseline, then requires a new join.
 
-Unsupported servers leave local work usable. Unknown sent commands block dependent shared edits and remain attached to their original account/project, even after switching to local mode. After a fresh snapshot of that project, the client resends the exact original with the same operation ID; the server returns its recorded outcome, executes it once if it never arrived, or reports a conflict, and that answer settles it. Reconnecting to the same world and account re-joins the project the previous connection was synchronized to. **Recover metadata**, then **Confirm recovery**, preserves damaged bytes but cannot establish the outcome of a command missing from a backup; shared writes stay blocked, and local work remains available. See [Phase 3A usage, persistence and verification](docs/phase-3-shared-work.md) for these limits.
+Unsupported servers leave local work usable; the MCMaterialList and Shared work screens say why real-time sharing is unavailable there (no MCMaterialList, or an incompatible version). Nothing is uploaded to any other service. Unknown sent commands block dependent shared edits and remain attached to their original account/project, even after switching to local mode. After a fresh snapshot of that project, the client resends the exact original with the same operation ID; the server returns its recorded outcome, executes it once if it never arrived, or reports a conflict, and that answer settles it. Reconnecting to the same world and account re-joins the project the previous connection was synchronized to. **Recover metadata**, then **Confirm recovery**, preserves damaged bytes but cannot establish the outcome of a command missing from a backup; shared writes stay blocked, and local work remains available. See [Phase 3A usage, persistence and verification](docs/phase-3-shared-work.md) for these limits.
 
 ## Location Files
 
@@ -45,7 +57,7 @@ Use JDK 25 as `JAVA_HOME`:
 .\gradlew.bat clean verifyPhase4 -PacceptMinecraftEula=true
 ```
 
-`verifyPhase0` to `verifyPhase3` remain available. Linux/macOS use `./gradlew`; Linux client tests need a display, for example `xvfb-run -a ./gradlew verifyPhase4 -PacceptMinecraftEula=true`.
+`verifyPhase0` to `verifyPhase3` remain available. From `verifyPhase0` on, the first client process must also show that ordinary footer clicks open the MCMaterialList screen (GUI scales 1-4 and Japanese) and that the local work diagnostic writes nothing without its developer flag; `build` checks that `en_us` and `ja_jp` have the same translation keys. Linux/macOS use `./gradlew`; Linux client tests need a display, for example `xvfb-run -a ./gradlew verifyPhase4 -PacceptMinecraftEula=true`.
 
 The distribution is `fabric/build/libs/fabric-0.1.0-phase.3a.jar` and includes the core library. Fabric API is required on both sides; pinned Litematica/MaLiLib are client-only. Unsupported or missing client mods disable the adapter. The dedicated server needs neither optional client mod. `:fabric:runClient` launches the normal development client. Minecraft 26.2 is unobfuscated: Loom uses `jar`, without external mappings or `remapJar`.
 
