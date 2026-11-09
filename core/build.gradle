@@ -5,3 +5,9 @@ dependencies {
 }
 // The nested core JAR carries the project license too.
 jar { from(rootProject.file('LICENSE')) }
+// Phase 5A: echo load-profile measurement lines so hosted CI console logs keep them (the JUnit XML keeps them as well).
+tasks.named('test') {
+    onOutput { descriptor, event ->
+        event.message.readLines().findAll { it.startsWith('PERF5A ') }.each { logger.lifecycle(it) }
+    }
+}

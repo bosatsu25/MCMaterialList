@@ -132,6 +132,38 @@ tasks.register('verifyStockScan') {
     }
 }
 
+// Issue #12 (Phase 5A): the two-client dedicated-server run must leave design section 13 operation traces in the server log, and
+// neither the server log nor its Check Materials summaries may contain private content (the multiplayer fixture's note bodies,
+// item ids). The measured stock tick budget and trace timings are echoed as PERF5A lines; they are observations, not gates.
+tasks.register('verifyPerformance') {
+    group = 'verification'
+    description = 'Require Phase 5A operation traces without private content on the dedicated server, and print its measured budgets.'
+    dependsOn 'verifyMultiplayer'
+    doLast {
+        def server = layout.buildDirectory.file('run/multiplayer/consoles/server.log').get().asFile
+        if (!server.exists()) throw new GradleException('The dedicated server console log is missing.')
+        def lines = server.readLines('UTF-8')
+        ['beta note', 'while beta offline', 'after revocation'].each { note ->
+            if (lines.any { it.contains(note) }) throw new GradleException("The dedicated server log contains a private note body: ${note}")
+        }
+        def traces = lines.findAll { it.contains('MCMaterialList trace op=') }
+        if (!traces.any { it.contains('op=join') && it.contains(' result=OK') })
+            throw new GradleException('The dedicated server logged no successful design section 13 join trace.')
+        traces.each { line ->
+            [' project=', ' task=', ' operation=', ' intent=', ' result=', ' revision=', ' queuedMicros=', ' durationMicros='].each { key ->
+                if (!line.contains(key)) throw new GradleException("An operation trace lacks${key}: ${line}")
+            }
+        }
+        def scans = lines.findAll { it.contains('Stock scan ') }.collect { it.substring(it.indexOf('Stock scan ')) }
+        scans.each { scan -> if (scan.contains('minecraft:')) throw new GradleException("A Check Materials summary contains inventory content: ${scan}") }
+        def longest = { List<String> values, String key ->
+            values.collect { value -> def match = (value =~ /${key}=(\d+)/); match.find() ? (match.group(1) as long) : 0L }.max() ?: 0L
+        }
+        logger.lifecycle("PERF5A hosted-server-traces count=${traces.size()} maxQueuedMicros=${longest(traces, 'queuedMicros')} maxDurationMicros=${longest(traces, 'durationMicros')}")
+        logger.lifecycle("PERF5A hosted-server-stock-scans count=${scans.size()} maxContainersPerTick=${longest(scans, 'maxContainersPerTick')} maxNanosPerTick=${longest(scans, 'maxNanosPerTick')}")
+    }
+}
+
 // Issue #11: Unshare regions must have passed in the native shared UI run (held result, detached Done, rejoin export,
 // geometry at GUI scales 1-4, narrow and Japanese) and in both multiplayer clients (real SharedClientService on beta).
 tasks.register('verifyUnshare') {
