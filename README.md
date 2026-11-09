@@ -57,6 +57,8 @@ Use JDK 25 as `JAVA_HOME`:
 .\gradlew.bat clean verifyPhase4 -PacceptMinecraftEula=true
 ```
 
+The test plan, the acceptance traceability and the applied test techniques are in [docs/test-plan.md](docs/test-plan.md), [docs/test-traceability.md](docs/test-traceability.md) and [docs/test-design.md](docs/test-design.md). `:core:test` also writes a JaCoCo coverage report to `core/build/reports/jacoco/test/` (no threshold yet).
+
 `verifyPhase0` to `verifyPhase3` remain available. From `verifyPhase0` on, the first client process must also show that ordinary footer clicks open the MCMaterialList screen (GUI scales 1-4 and Japanese) and that the local work diagnostic writes nothing without its developer flag; `build` checks that `en_us` and `ja_jp` have the same translation keys. Linux/macOS use `./gradlew`; Linux client tests need a display, for example `xvfb-run -a ./gradlew verifyPhase4 -PacceptMinecraftEula=true`.
 
 The distribution is `fabric/build/libs/fabric-0.1.0-phase.3a.jar` and includes the core library. Fabric API is required on both sides; pinned Litematica/MaLiLib are client-only. Unsupported or missing client mods disable the adapter. The dedicated server needs neither optional client mod. `:fabric:runClient` launches the normal development client. Minecraft 26.2 is unobfuscated: Loom uses `jar`, without external mappings or `remapJar`.
