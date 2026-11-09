@@ -1,4 +1,8 @@
 // No Minecraft, Fabric or Litematica dependency. JSON is a local persistence boundary.
+// JaCoCo (Gradle's built-in plugin) measures statement/branch coverage of the core JUnit suite (JSTQB FL 4.3, docs/test-plan.md).
+// No coverage threshold yet: the numbers are recorded from CI before any gate is set.
+apply plugin: 'jacoco'
+jacoco { toolVersion = '0.8.14' }   // first release with official Java 25 class file support
 dependencies {
     implementation 'com.google.code.gson:gson:2.14.0'
     compileOnly 'com.google.errorprone:error_prone_annotations:2.48.0'
@@ -9,5 +13,14 @@ jar { from(rootProject.file('LICENSE')) }
 tasks.named('test') {
     onOutput { descriptor, event ->
         event.message.readLines().findAll { it.startsWith('PERF5A ') }.each { logger.lifecycle(it) }
+    }
+}
+tasks.named('test') { finalizedBy tasks.named('jacocoTestReport') }
+tasks.named('jacocoTestReport') {
+    dependsOn tasks.named('test')
+    reports {
+        xml.required = true    // core/build/reports/jacoco/test/jacocoTestReport.xml
+        html.required = true   // core/build/reports/jacoco/test/html/index.html
+        csv.required = false
     }
 }
