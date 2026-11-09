@@ -112,6 +112,8 @@ public final class MaterialWorkSession {
         if (shared.loading() || shared.selected()) return dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
         // An unreadable sharing archive may hide a shared binding: never call the list local then.
         if (shared.metadataBlocked()) return dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
+        // Same order as feedback(): a placement that lost its unique identity needs fixing, it is not just waiting (#14).
+        if (!identityHolds()) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.ACTION_REQUIRED;
         if (pending) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.SYNCING;
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.SAVE_FAILURE;
         return !ready() ? dev.mcmateriallist.core.ui.WorkStatePresentation.State.WAITING : dev.mcmateriallist.core.ui.WorkStatePresentation.State.LOCAL;
