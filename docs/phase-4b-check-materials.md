@@ -130,10 +130,18 @@ No existing dependency was removed. The application JAR still excludes all test 
   - an immediate second request is refused by the cooldown and falls back to the client;
   - after beta opens the chest, it is Observed with the limited-scope label.
 
+- **`Phase5GCoverageClientTest`** (Issue #34, singleplayer, first process; `verifyStockScan` also requires its fresh-process confirmation `Phase 5G coverage restore PASS`):
+
+  | Path | Expected | Log marker |
+  |---|---|---|
+  | Server without the stock channel | The capability check answers false (test mixin `StockChannelAbsence`, the same branch as `ClientPlayNetworking.canSend` failing): the check falls back at once, with the limited-scope footer and nothing reported; after the player opens the registered chest, the next check shows it as Observed with its 12 items, never as Checked. | `Phase 5G stock fallback without channel PASS` |
+  | Placed shulker box, dropper, dispenser | The shulker box is storage (7); the dropper (3) and dispenser (2) are machines and only counted "in machines". | `Phase 5G stock containers and CHANGED PASS` |
+  | Block changed | A registered chest replaced by stone is Block changed and carries no counts. | same |
+  | Grant, Revoke, Grant all buttons | On the details screen of a Location File bound to the list's own project, each click is saved in `<world>/mcmateriallist-stock/grants/<project>.json` (read back with `StockGrantStore`) and the row control flips between Grant and Revoke. | `Phase 5G stock grant revoke buttons PASS` |
+  | Damaged grant file and recovery | A damaged primary file with a valid backup fails closed: the listing answers FAILED, no grant control is offered, and the damaged bytes are not rewritten. `StockGrantStore.recover` (an operator action; there is no in-game control) keeps the damaged bytes in `grants-damaged-*.json` and restores the previous-good backup, which the details screen then lists and manages again. | `Phase 5G stock grant file recovery PASS` |
+  | Cancel midway | 256 registered barrels stream at most 4 reports per tick; the Checking ... Cancel control stops the check with fewer than 256 reports, no Done, the unchecked count in the footer, and no scan left running on the server. | `Phase 5G stock cancel midway PASS` |
+
 **Not covered by automated tests:**
 
-- the Grant and Revoke buttons of the details screen; the grant path is covered through the protocol;
-- grant-file recovery on a server;
-- the LAN-owner case;
-- Block changed;
-- dispensers, droppers and placed shulker boxes in a client test.
+- the LAN-owner case (`StockAuthority.serverAdmin` treats it like the singleplayer owner; opening a LAN world from a test is not available);
+- a real server process without MCMaterialList: the client side is simulated as described above, because the harness has no unmodded server.
