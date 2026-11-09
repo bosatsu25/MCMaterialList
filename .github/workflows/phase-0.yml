@@ -1,4 +1,4 @@
-name: Phase 0/1/2/3 regression and Phase 4A Location Files
+name: Regression gates through Phase 4 (verifyPhase4)
 on:
   push:
   pull_request:
