@@ -33,6 +33,7 @@ public final class RegionWorkSession {
     private StoreStatus status;
     private boolean pending, loaded, showInfo, hideDone, recoveryConfirmed;
     private ButtonGeneric refreshButton, recoverButton;
+    private String refreshText;
     private int toolbarStart, toolbarWidth, toolbarY;
     private long sharedVersion = -1;
     private boolean sharedRebuild;
@@ -120,6 +121,43 @@ public final class RegionWorkSession {
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return text("storage", status.name());
         return !ready() ? text("waiting") : status == StoreStatus.OK ? text("local") : text("untracked");
     }
+    /** Issue #22: the state the MCMaterialList screen shows, from the same branches as feedback(). */
+    public dev.mcmateriallist.core.ui.WorkStatePresentation.State state() {
+        if (shared.loading() || shared.selected()) return dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
+        if (detached()) return pending || shared.pending() ? dev.mcmateriallist.core.ui.WorkStatePresentation.State.SYNCING
+            : dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
+        if (shared.metadataBlocked()) return dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
+        if (pending) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.SYNCING;
+        if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.SAVE_FAILURE;
+        return !ready() ? dev.mcmateriallist.core.ui.WorkStatePresentation.State.WAITING : dev.mcmateriallist.core.ui.WorkStatePresentation.State.LOCAL;
+    }
+    /**
+     * feedback(), except that unreadable sharing metadata (or the sharing view limit) also says why original region
+     * editing is blocked: a detached copy could be hidden in that metadata (#11 strict default).
+     */
+    public String stateReason() {
+        if (!shared.loading() && !shared.selected() && !detached() && shared.metadataBlocked()
+            && !shared.reasonKey().equals("placement_unavailable")) return text("metadata_blocked", shared.feedback());
+        return feedback();
+    }
+    /** The next step where the reason text does not already name one; null otherwise. */
+    public String nextAction() {
+        if (shared.loading() || shared.selected() || detached() || shared.metadataBlocked() || pending) return null;
+        if (status == StoreStatus.RECOVERY_REQUIRED) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.recover");
+        if (status == StoreStatus.CONFLICT) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.conflict");
+        if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.storage");
+        if (!ready()) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.region_waiting");
+        return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text(status == StoreStatus.OK ? "next_action.region_local" : "next_action.region_track");
+    }
+    /** Track regions before original local work exists, else Refresh work. */
+    public String refreshLabel() { return text(!shared.selected() && !detached() && status == StoreStatus.MISSING ? "track" : "refresh"); }
+    public boolean refreshEnabled() {
+        return !shared.loading() && switch (view().source()) {
+            case SHARED -> !shared.pending() && ready();
+            case DETACHED -> writable();
+            case LOCAL -> !pending && !shared.metadataBlocked() && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT);
+        };
+    }
     public void toolbar() {
         if (!loaded && ready()) { loaded = true; await(MCMaterialListClient.work().load(placement, DatasetKind.REGIONS), this::publish); }
         toolbarStart = compact() ? 18 + screen.getStringWidth(fi.dy.masa.malilib.util.StringUtils.translate("litematica.gui.label.schematic_placement.sub_regions", screen.getSchematicPlacement().getSubRegionCount())) : 12;
@@ -129,7 +167,8 @@ public final class RegionWorkSession {
         int slots = (!detached() && status == StoreStatus.RECOVERY_REQUIRED) || (local != null && !local.archived().isEmpty()) ? 4 : 3;
         toolbarWidth = Math.max(20, (end - toolbarStart) / (compact() ? 3 : slots) - 2);
         toolbarY = compact() ? 44 : 64;
-        refreshButton = add(0, text(!shared.selected() && !detached() && status == StoreStatus.MISSING ? "track" : "refresh"), (button, mouse) -> refresh());
+        refreshText = refreshLabel();
+        refreshButton = add(0, refreshText, (button, mouse) -> refresh());
         add(1, text("hide_done", hideDone ? "ON" : "OFF"), (button, mouse) -> { hideDone = !hideDone; screen.initGui(); });
         add(2, text("show_info", showInfo ? "ON" : "OFF"), (button, mouse) -> { showInfo = !showInfo; screen.initGui(); });
         recoverButton = null;
@@ -156,11 +195,11 @@ public final class RegionWorkSession {
         button.setHoverStrings(label); return screen.addButton(button, action);
     }
     private void renderControls() {
-        if (refreshButton != null) refreshButton.setEnabled(!shared.loading() && switch (view().source()) {
-            case SHARED -> !shared.pending() && ready();
-            case DETACHED -> writable();
-            case LOCAL -> !pending && !shared.metadataBlocked() && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT);
-        });
+        // Issue #22: a disabled control keeps its label first in the hover and adds the reason and the next action.
+        if (refreshButton != null) dev.mcmateriallist.fabric.client.work.ActionReason.show(refreshButton, refreshText, refreshEnabled(), () -> {
+            String next = nextAction();
+            return next == null ? stateReason() : stateReason() + " " + dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next", next);
+        }, screen.getScreenWidth());
         if (recoverButton != null) recoverButton.setEnabled(!pending && !shared.loading() && ready());
     }
     public void footer(GuiContext ctx) {

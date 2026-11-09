@@ -1,6 +1,6 @@
 package dev.mcmateriallist.fabric.client.mixin;
 
-import dev.mcmateriallist.fabric.client.litematica.Phase0Ui;
+import dev.mcmateriallist.fabric.client.litematica.FooterEntry;
 import dev.mcmateriallist.fabric.client.material.MaterialWorkScreen;
 import dev.mcmateriallist.fabric.client.material.MaterialWorkSession;
 import fi.dy.masa.litematica.gui.GuiMaterialList;
@@ -34,14 +34,14 @@ public abstract class MaterialListGuiMixin extends GuiListBase<MaterialListEntry
 
     @Inject(method = "initGui()V", at = @At("TAIL"), require = 0)
     private void addPhase0Button(CallbackInfo callback) {
-        Phase0Ui.addMaterialButton((GuiBase) (Object) this);
+        FooterEntry.addMaterialButton((GuiBase) (Object) this);
         if (mcmateriallist$session().compact()) {
             var buttons = ((GuiButtonsAccess) this).mcmateriallist$buttons();
             // The four upstream export/cache buttons keep their listeners in the footer.
             int end = buttons.stream().filter(button -> button.getY() == getScreenHeight() - 22)
                 .mapToInt(button -> button.getX() + button.getWidth()).max().orElse(12);
-            var diagnostic = buttons.getLast();
-            diagnostic.setPosition(end + 2, getScreenHeight() - 22);
+            var entry = buttons.getLast();
+            entry.setPosition(end + 2, getScreenHeight() - 22);
         }
         mcmateriallist$session().toolbar();
     }

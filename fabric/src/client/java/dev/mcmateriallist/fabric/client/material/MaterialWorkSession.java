@@ -40,6 +40,7 @@ public final class MaterialWorkSession {
     private boolean loaded;
     private Set<MaterialTaskId> changed = Set.of();
     private ButtonGeneric refreshButton;
+    private String refreshText;
     private ButtonGeneric recoverButton;
     private long sharedVersion = -1;
     private boolean sharedRebuild;
@@ -47,6 +48,7 @@ public final class MaterialWorkSession {
     private boolean locationRebuild;
     private final dev.mcmateriallist.fabric.client.stock.StockSession stock;
     private ButtonGeneric stockButton;
+    private String stockLabel;
     private String stockShown;
     private boolean stockRebuild;
     private long stockBuilt;
@@ -96,6 +98,31 @@ public final class MaterialWorkSession {
         if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return text("storage", status.name());
         return !ready() ? text("waiting") : status == StoreStatus.OK ? text("local") : text("untracked");
     }
+    /** Issue #22: the state the MCMaterialList screen shows, from the same branches as feedback(). */
+    public dev.mcmateriallist.core.ui.WorkStatePresentation.State state() {
+        if (placement == null) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.ACTION_REQUIRED;
+        if (shared.loading() || shared.selected()) return dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
+        if (pending) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.SYNCING;
+        if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.SAVE_FAILURE;
+        return !ready() ? dev.mcmateriallist.core.ui.WorkStatePresentation.State.WAITING : dev.mcmateriallist.core.ui.WorkStatePresentation.State.LOCAL;
+    }
+    /** feedback(), except that a placement without a saved unique identity names that cause. */
+    public String stateReason() { return placement == null ? dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("placement_unavailable") : feedback(); }
+    /** The next step where the reason text does not already name one; null otherwise. */
+    public String nextAction() {
+        if (placement == null || shared.loading() || shared.selected() || pending) return null;
+        if (status == StoreStatus.RECOVERY_REQUIRED) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.recover");
+        if (status == StoreStatus.CONFLICT) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.conflict");
+        if (status != null && status != StoreStatus.OK && status != StoreStatus.MISSING) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.storage");
+        if (!ready()) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.material_waiting");
+        return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text(status == StoreStatus.OK ? "next_action.material_local" : "next_action.material_track");
+    }
+    /** Track materials before local work exists, else Refresh work. */
+    public String refreshLabel() { return text(!shared.selected() && status == StoreStatus.MISSING ? "track" : "refresh"); }
+    public boolean refreshEnabled() {
+        return !shared.loading() && (shared.selected() ? !shared.pending() && ready()
+            : !pending && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT));
+    }
     public void toolbar() {
         if (!loaded && placement != null && MCMaterialListClient.work() != null) {
             loaded = true;
@@ -105,7 +132,8 @@ public final class MaterialWorkSession {
         var buttons = ((dev.mcmateriallist.fabric.client.mixin.GuiButtonsAccess) screen).mcmateriallist$buttons();
         int refreshX = compact ? buttons.stream().filter(button -> button.getY() == screen.getScreenHeight() - 22)
             .mapToInt(button -> button.getX() + button.getWidth()).max().orElse(12) + 2 : 12;
-        refreshButton = addToolbar(refreshX, compact ? screen.getScreenHeight() - 22 : 44, text(!shared.selected() && status == StoreStatus.MISSING ? "track" : "refresh"), (button, mouse) -> refresh());
+        refreshText = refreshLabel();
+        refreshButton = addToolbar(refreshX, compact ? screen.getScreenHeight() - 22 : 44, refreshText, (button, mouse) -> refresh());
         int x = compact ? buttons.stream().filter(button -> button.getY() == 24)
             .mapToInt(button -> button.getX() + button.getWidth()).max().orElse(12) + 2 : refreshX + refreshButton.getWidth() + 4;
         int filterY = compact ? 24 : 44;
@@ -158,9 +186,10 @@ public final class MaterialWorkSession {
         int[][] stockRows = compact ? new int[][]{{filterY, 0}, {footer, 0}, {2, screen.getScreenWidth() / 2}, {lower, refreshX + refreshButton.getWidth() + 2}}
             : new int[][]{{filterY, 0}, {lower, 0}, {footer, 0}, {2, screen.getScreenWidth() / 2}};
         String check = stock.label();
+        stockLabel = check;
         int[] checkSlot = slot(toolbarWidth(check), stockRows);
         stockButton = addToolbar(checkSlot[0], checkSlot[1], checkSlot[2], check, (button, mouse) -> { stock.click(); screen.initGui(); });
-        stockButton.setEnabled(stock.enabled());
+        renderControls();
         stockShown = stockState(); stockBuilt = System.nanoTime();
         if (stock.details()) {
             String details = dev.mcmateriallist.fabric.client.stock.StockSession.text("details");
@@ -192,9 +221,15 @@ public final class MaterialWorkSession {
         return new int[]{widest[0], widest[1], Math.max(28, widest[2])};
     }
     public void renderControls() {
-        if (refreshButton != null) refreshButton.setEnabled(!shared.loading() && (shared.selected() ? !shared.pending() && ready() : !pending && ready() && (status == StoreStatus.OK || status == StoreStatus.MISSING || status == StoreStatus.CONFLICT)));
+        // Issue #22: a disabled control keeps its label first in the hover and adds the reason and the next action.
+        if (refreshButton != null) dev.mcmateriallist.fabric.client.work.ActionReason.show(refreshButton, refreshText, refreshEnabled(),
+            () -> next(stateReason(), nextAction()), screen.getScreenWidth());
         if (recoverButton != null) recoverButton.setEnabled(!pending && !shared.loading() && ready());
-        if (stockButton != null) stockButton.setEnabled(stock.enabled());
+        if (stockButton != null) dev.mcmateriallist.fabric.client.work.ActionReason.show(stockButton, stockLabel, stock.enabled(),
+            () -> dev.mcmateriallist.fabric.client.stock.StockSession.text("reason.no_location"), screen.getScreenWidth());
+    }
+    private static String next(String reason, String next) {
+        return next == null ? reason : reason + " " + dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next", next);
     }
     public void footer(GuiContext ctx) {
         if (!locationRebuild && locations.stale()) {

@@ -9,7 +9,7 @@ import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
 import fi.dy.masa.malilib.gui.button.ButtonBase;
 
-/** Temporary Phase 1 diagnostic; deliberately no final task editing controls. */
+/** Developer-only Phase 1 diagnostic (Issue #22): reachable only by Shift-click with -Dmcmateriallist.diagnostics=true; see FooterEntry. */
 public final class LocalWorkDiagnostic {
     private LocalWorkDiagnostic() {}
     public static void refresh(GuiBase screen, ButtonBase button, SchematicPlacement placement, MaterialListBase materials) {

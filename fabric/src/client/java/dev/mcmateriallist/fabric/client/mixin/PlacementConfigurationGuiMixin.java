@@ -1,6 +1,6 @@
 package dev.mcmateriallist.fabric.client.mixin;
 
-import dev.mcmateriallist.fabric.client.litematica.Phase0Ui;
+import dev.mcmateriallist.fabric.client.litematica.FooterEntry;
 import dev.mcmateriallist.fabric.client.region.*;
 import fi.dy.masa.litematica.gui.GuiPlacementConfiguration;
 import fi.dy.masa.litematica.gui.widgets.WidgetListPlacementSubRegions;
@@ -36,7 +36,7 @@ public abstract class PlacementConfigurationGuiMixin extends GuiListBase<SubRegi
     }
     @Inject(method = "initGui()V", at = @At("TAIL"), require = 1)
     private void addWork(CallbackInfo callback) {
-        Phase0Ui.addPlacementButton(this, placement);
+        FooterEntry.addPlacementButton(this, placement);
         if (mcmateriallist$session().compact()) ((GuiButtonsAccess) this).mcmateriallist$buttons().getLast().setY(getScreenHeight() - 22);
         mcmateriallist$session().toolbar();
     }
