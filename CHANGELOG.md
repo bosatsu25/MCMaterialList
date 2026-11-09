@@ -46,6 +46,10 @@ This release was published without these checks. They are open, not passed:
 - **Release gate** (#13): hosted CI runs `verifyRelease` (every Phase 0-4 gate, `verifyApplicationJar`, `verifyDependencyLicenses` and `verifyTranslations`) and uploads the application JAR. Platform evidence is in [docs/platform-verification.md](docs/platform-verification.md).
 - Acceptance record: [docs/acceptance-0.1.0.md](docs/acceptance-0.1.0.md). 15 of AC-01 to AC-18 are fully covered by automated gates and 3 partly (AC-01, AC-15, AC-17). Manual acceptance was not run.
 
+### Fixed before release
+
+- **Unloaded-chunk refusal** (#34): the client's `Level.hasChunkAt` stayed true for a chunk the client no longer had, so registering a container whose chunk had unloaded was never refused. The guard now asks the client chunk cache. The hosted run logged `cache=false levelHasChunkAt=true` 4000 blocks away.
+
 ### Known limitations
 
 - One shared project is actively synchronized per connection.

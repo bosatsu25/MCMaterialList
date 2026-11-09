@@ -89,4 +89,4 @@ AC-01〜AC-10、AC-18 の画面上の根拠の詳細は [phase-2-litematica-ui.m
 7. **互換性（他の MOD、別バージョン、OS）**：#14 で監査（[compatibility.md](compatibility.md)）、#13 で OS の確認範囲を記録（[platform-verification.md](platform-verification.md)）。CI は Ubuntu のみ。Windows は Phase 0〜2 の手動記録だけ、**macOS は未確認**。Litematica / MaLiLib のないクライアントの無効化経路は自動テストなし。
 8. **境界値の未実施項目**：BV-06 の 3 値目（未確定 65 件のファイル）、`StockLimits.FRESH` の境界手前側（[test-design.md](test-design.md) §2.1）。
 9. **WorkStatePresentation（#22）**：取り込み済み。core `WorkStatePresentationTest`（3 件）と、クライアントの `Phase 5E footer opens MCMaterialList screen PASS` / `Phase 5E diagnostic requires explicit flag PASS` で確認している。JSTQB 文書のデシジョンテーブルはまだ作成していない。
-10. **#34 と JSTQB のテストの初回 CI**：JSTQB のテストは core のみで、ローカルで合格している（core 全体で 286 件）。#34 のテストは fabric のクライアントテストで、fabric をビルドできない環境で書かれたため、リリース対象のコミットの CI が最初のコンパイル・実行になる。CI が成功するまで、#34 のマーカーに依存する行（AC-12 ほか）は PASS と扱わない。
+10. **#34 と JSTQB のテストの初回 CI**：解消。JSTQB のテストは core のみで、ローカルで合格している（core 全体で 286 件）。#34 のクライアントテストは PR #41 の CI（実行 42689396105）で初めてコンパイル・実行され、すべてのマーカーが合格した。最初の実行で見つかった未ロードチャンクの拒否の不具合は、同じ PR で修正した（[compatibility.md](compatibility.md)）。
