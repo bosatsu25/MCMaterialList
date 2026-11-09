@@ -250,12 +250,12 @@ public final class Phase0ClientTest implements FabricClientGameTest {
             String state = WorkHubScreen.text("state", WorkHubScreen.text("state." + hub.state().name()));
             check(state.startsWith(hub.lines().getFirst()), "MCMaterialList screen does not lead with the work state");
             String shared = WorkHubScreen.text(materials ? "shared" : "shared_regions");
-            check(((GuiBaseTestAccess) hub).phase0Buttons().stream().anyMatch(button -> button.getHoverStrings().contains(shared)),
+            check(((GuiBaseTestAccess) (Object) hub).phase0Buttons().stream().anyMatch(button -> button.getHoverStrings().contains(shared)),
                 "MCMaterialList screen offers no path to Shared work");
             if (materials) {
                 var work = ((dev.mcmateriallist.fabric.client.material.MaterialWorkScreen) parent).mcmateriallist$session();
                 for (String label : List.of(work.refreshLabel(), work.location().label(), work.stock().label()))
-                    check(((GuiBaseTestAccess) hub).phase0Buttons().stream().anyMatch(button -> button.getHoverStrings().contains(label)),
+                    check(((GuiBaseTestAccess) (Object) hub).phase0Buttons().stream().anyMatch(button -> button.getHoverStrings().contains(label)),
                         "MCMaterialList screen lacks the action: " + label);
             }
         });
@@ -265,7 +265,7 @@ public final class Phase0ClientTest implements FabricClientGameTest {
     }
 
     private static void checkHub(WorkHubScreen hub, net.minecraft.client.gui.Font font) {
-        var buttons = ((GuiBaseTestAccess) hub).phase0Buttons();
+        var buttons = ((GuiBaseTestAccess) (Object) hub).phase0Buttons();
         check(buttons.size() >= 3, "MCMaterialList screen has no actions");
         for (ButtonBase button : buttons) {
             check(button.getX() >= 0 && button.getY() >= 0 && button.getX() + button.getWidth() <= hub.getScreenWidth()
