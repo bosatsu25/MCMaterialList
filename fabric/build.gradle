@@ -160,7 +160,7 @@ tasks.register('verifyPerformance') {
             values.collect { value -> def match = (value =~ /${key}=(\d+)/); match.find() ? (match.group(1) as long) : 0L }.max() ?: 0L
         }
         logger.lifecycle("PERF5A hosted-server-traces count=${traces.size()} maxQueuedMicros=${longest(traces, 'queuedMicros')} maxDurationMicros=${longest(traces, 'durationMicros')}")
-        logger.lifecycle("PERF5A hosted-server-stock-scans count=${scans.size()} maxContainersPerTick=${longest(scans, 'maxContainersPerTick')} maxNanosPerTick=${longest(scans, 'maxNanosPerTick')}")
+        logger.lifecycle("PERF5A hosted-server-stock-scans count=${scans.size()} maxContainersPerTick=${longest(scans, 'maxContainersPerTick')} maxNanosPerTick=${longest(scans, 'maxNanosPerTick')} maxStepNanos=${longest(scans, 'maxStepNanos')} overBudgetTicks=${longest(scans, 'overBudgetTicks')} busyTicks=${longest(scans, 'busyTicks')}")
     }
 }
 
