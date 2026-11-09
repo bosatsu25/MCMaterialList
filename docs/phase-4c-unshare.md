@@ -77,6 +77,8 @@ These are covered by `SharedClientUnshareTest` in core. The working spec they co
 - **Size.** Because of I1, at most one large blob sits in each binding slot, so `MAX_BYTES` is unchanged. Each copy is limited to `SharedLimits.MESSAGE_BYTES` of JSON and to `DatasetJsonCodec.MAX_TASKS` tasks.
 - **Fault injection.** A package-private store `WriteHook` can inject failures at three points: before the export replace, before the backup replace and before the primary replace.
 
+**Upgrade note.** Client shared state saved by this build is schema 3; builds before PR #32 read it as `UNSUPPORTED_SCHEMA` and block shared writes, and cannot see a detached copy. Downgrading after saving is not supported; see [Compatibility: upgrade and downgrade notes](compatibility.md#upgrade-and-downgrade-notes).
+
 ## Verification
 
 `./gradlew verifyPhase4 -PacceptMinecraftEula=true` runs `:fabric:verifyUnshare`, which requires these markers:
