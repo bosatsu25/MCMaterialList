@@ -145,9 +145,11 @@ public final class WorkHubScreen extends GuiBase {
             rebuilding = true;
             mc.schedule(() -> { rebuilding = false; if (mc.gui.screen() == this) initGui(); });
         }
-        int width = Math.max(0, getScreenWidth() - 24), max = Math.max(0, (textBottom - 30) / LINE);
+        // Below the title normally; on a very short screen move up under the title so the state and reason still fit,
+        // and never drop the state line itself.
+        int y = (textBottom - 30) / LINE >= 2 ? 30 : Math.max(18, textBottom - 2 * LINE);
+        int width = Math.max(0, getScreenWidth() - 24), max = Math.max(1, (textBottom - y) / LINE);
         List<String> drawn = new ArrayList<>();
-        int y = 30;
         for (var line : content()) {
             for (String part : TextWrap.wrap(line.text(), width, this::getStringWidth)) {
                 // Most important first: state, reason and next action; on a very short screen the reason also stays

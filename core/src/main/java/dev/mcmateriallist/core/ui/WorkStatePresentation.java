@@ -60,7 +60,9 @@ public final class WorkStatePresentation {
         if (key.equals("server_unavailable") || key.equals("protocol_unsupported")) return State.SHARING_UNAVAILABLE;
         if (WAITING.contains(key)) return State.WAITING;
         if (SYNCING.contains(key)) return State.SYNCING;
-        if (DEFINITION.contains(key) || key.startsWith("source.")) return State.DEFINITION_MISMATCH;
+        // Only a source that was read and found different is a mismatch; an unsaved, missing, unsafe, too large or
+        // unreadable source could not be verified at all, so it needs action rather than claiming a difference.
+        if (DEFINITION.contains(key) || key.equals("source.CHANGED")) return State.DEFINITION_MISMATCH;
         if (SAVE_FAILURE.contains(key) || key.startsWith("storage.")) return State.SAVE_FAILURE;
         return State.ACTION_REQUIRED;
     }

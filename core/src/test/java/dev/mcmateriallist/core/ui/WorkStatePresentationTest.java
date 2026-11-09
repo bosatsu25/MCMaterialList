@@ -35,7 +35,13 @@ class WorkStatePresentationTest {
             Map.entry("result.SAVE_FAILED", State.SAVE_FAILURE),
             Map.entry("capture.MATERIALS_NOT_READY", State.WAITING),
             Map.entry("placement_capacity", State.ACTION_REQUIRED),
-            Map.entry("wrong_world", State.ACTION_REQUIRED));
+            Map.entry("wrong_world", State.ACTION_REQUIRED),
+            // A source that could not be read or verified is not a confirmed mismatch.
+            Map.entry("source.IO_FAILURE", State.ACTION_REQUIRED),
+            Map.entry("source.TOO_LARGE", State.ACTION_REQUIRED),
+            Map.entry("source.MISSING", State.ACTION_REQUIRED),
+            Map.entry("source.UNSAVED", State.ACTION_REQUIRED),
+            Map.entry("source.UNSAFE_PATH", State.ACTION_REQUIRED));
         expected.forEach((key, state) -> assertEquals(state, WorkStatePresentation.ofSharedReason(key), key));
     }
 
