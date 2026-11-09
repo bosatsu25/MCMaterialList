@@ -21,7 +21,8 @@ public final class SharedProjectStore {
         static <T> Result<T> failure(StoreStatus status) { return new Result<>(status, null); }
     }
     public record World(UUID namespace, List<UUID> projects) { public World { projects = List.copyOf(projects); } }
-    private record Payload(int schema, byte[] bytes) {}
+    /** archive is the project payload decoded once during validation (null for the world file), reused by readers (Phase 5A). */
+    private record Payload(int schema, byte[] bytes, ProjectArchive archive) {}
     public enum WriteStage { BEFORE_BACKUP_REPLACE, BEFORE_PRIMARY_REPLACE }
     @FunctionalInterface public interface WriteHook { void before(WriteStage stage) throws IOException; }
     private final Path root;
@@ -61,8 +62,7 @@ public final class SharedProjectStore {
     private Result<ProjectArchive> readProject(Path file, UUID world, UUID project) throws IOException {
         Result<Payload> bytes = read(file, "project");
         if (!bytes.ok()) return Result.failure(bytes.status());
-        Payload payload = bytes.value();
-        ProjectArchive archive = payload.schema() == 1 ? SharedBinary.decodeLegacyArchive(payload.bytes()) : SharedBinary.decodeArchive(payload.bytes());
+        ProjectArchive archive = bytes.value().archive();
         if (!archive.snapshot().scope().worldNamespace().equals(world) || !archive.snapshot().scope().projectId().equals(project))
             return Result.failure(StoreStatus.CORRUPT);
         return new Result<>(StoreStatus.OK, archive);
@@ -154,12 +154,12 @@ public final class SharedProjectStore {
             if (!kind.equals(actualKind) || encoded == null || reader.peek() != JsonToken.END_DOCUMENT) return Result.failure(StoreStatus.CORRUPT);
             if (encoded.length() > ((long) SharedLimits.ARCHIVE_BYTES + 2) / 3 * 4) return Result.failure(StoreStatus.TOO_LARGE);
             byte[] bytes = Base64.getDecoder().decode(encoded);
+            ProjectArchive archive = null;
             if (kind.equals("project")) {
                 // Opening never re-encodes a legacy payload, even near the archive byte limit.
-                if (version == 1) SharedBinary.decodeLegacyArchive(bytes);
-                else SharedBinary.decodeArchive(bytes);
+                archive = version == 1 ? SharedBinary.decodeLegacyArchive(bytes) : SharedBinary.decodeArchive(bytes);
             } else readUuid(bytes);
-            return new Result<>(StoreStatus.OK, new Payload(version, bytes));
+            return new Result<>(StoreStatus.OK, new Payload(version, bytes, archive));
         } catch (IOException | IllegalArgumentException | IllegalStateException exception) { return Result.failure(StoreStatus.CORRUPT); }
     }
     private static String envelope(String kind, byte[] payload) {
