@@ -15,6 +15,7 @@ import dev.mcmateriallist.fabric.client.location.LocationFileScreen;
 import dev.mcmateriallist.fabric.client.location.LocationProfileEditScreen;
 import dev.mcmateriallist.fabric.client.location.LocationSession;
 import dev.mcmateriallist.fabric.client.location.LocationWorld;
+import dev.mcmateriallist.fabric.client.location.LookedAtContainer;
 import dev.mcmateriallist.fabric.client.material.MaterialWorkScreen;
 import dev.mcmateriallist.fabric.client.material.MaterialWorkSession;
 import dev.mcmateriallist.fabric.client.shared.NativeSharedCapture;
@@ -188,8 +189,11 @@ public final class Phase5GCoverageClientTest implements FabricClientGameTest {
             context.waitFor(mc -> mc.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(unloaded), 200);
             HitResult look = context.computeOnClient(mc -> mc.hitResult);
             command.accept(tp(base.offset(4000, 0, 0), 90));
-            for (int i = 0; i < 2400 && context.computeOnClient(mc -> mc.level.hasChunkAt(unloaded)); i++) context.waitTick();
-            check(!context.computeOnClient(mc -> mc.level.hasChunkAt(unloaded)), "The chest chunk stayed loaded on the client");
+            for (int i = 0; i < 2400 && context.computeOnClient(mc -> LookedAtContainer.loaded(mc.level, unloaded)); i++) context.waitTick();
+            String chunkState = context.computeOnClient(mc -> "player=" + mc.player.blockPosition() + " cache=" + LookedAtContainer.loaded(mc.level, unloaded)
+                + " levelHasChunkAt=" + mc.level.hasChunkAt(unloaded) + " cachedChunks=" + mc.level.getChunkSource().getLoadedChunksCount());
+            LOG.info("Phase 5G client chunk state after leaving: {}", chunkState);
+            check(!context.computeOnClient(mc -> LookedAtContainer.loaded(mc.level, unloaded)), "The chest chunk stayed loaded on the client: " + chunkState);
             long generation = edit.profile().generation();
             context.setScreen(() -> edit);
             context.waitFor(mc -> mc.gui.screen() == edit && !edit.pending(), 200);

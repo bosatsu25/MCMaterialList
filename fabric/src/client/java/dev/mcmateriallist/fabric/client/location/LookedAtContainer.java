@@ -5,7 +5,9 @@ import dev.mcmateriallist.core.location.ContainerPosition;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
@@ -28,7 +30,7 @@ public final class LookedAtContainer {
         if (mc.level == null || mc.player == null || !(mc.hitResult instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK)
             return new Rejected("not_block", "");
         BlockPos pos = hit.getBlockPos();
-        if (!mc.level.hasChunkAt(pos)) return new Rejected("not_loaded", "");
+        if (!loaded(mc.level, pos)) return new Rejected("not_loaded", "");
         // Reach needs no separate check: the game only produces a BLOCK hit result within the player's interaction range.
         BlockState state = mc.level.getBlockState(pos);
         String id = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
@@ -37,7 +39,7 @@ public final class LookedAtContainer {
         try { here = position(pos, id); } catch (IllegalArgumentException outside) { return new Rejected("out_of_range", ""); }
         if (state.getBlock() instanceof ChestBlock && state.getValue(ChestBlock.TYPE) != ChestType.SINGLE) {
             BlockPos other = pos.relative(ChestBlock.getConnectedDirection(state));
-            if (!mc.level.hasChunkAt(other)) return new Rejected("not_loaded", "");
+            if (!loaded(mc.level, other)) return new Rejected("not_loaded", "");
             BlockState partner = mc.level.getBlockState(other);
             // Only the same block pointing back is the other half; an inconsistent neighbour leaves this a single chest.
             if (partner.is(state.getBlock()) && partner.getValue(ChestBlock.TYPE) != ChestType.SINGLE
@@ -48,6 +50,14 @@ public final class LookedAtContainer {
             }
         }
         return new Target(here, List.of(here));
+    }
+    /**
+     * Whether the client's chunk cache holds the chunk of pos. The cache is asked directly, without creating anything: on the client
+     * the level's hasChunkAt kept answering true for 2400 ticks after the player teleported 4000 blocks away (real-client run in
+     * issue #34), so it is not used to decide whether a block is loaded.
+     */
+    public static boolean loaded(Level level, BlockPos pos) {
+        return level.getChunkSource().getChunk(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()), false) != null;
     }
     private static ContainerPosition position(BlockPos pos, String id) { return new ContainerPosition(pos.getX(), pos.getY(), pos.getZ(), id); }
 }
