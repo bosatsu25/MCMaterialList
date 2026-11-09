@@ -7,15 +7,16 @@ import java.util.*;
 /**
  * The design §13 initial load profile: one project, 2000 material rows, 2000 regions, 20 participants. String sizes are
  * representative (registry-id-like material ids, short region names, a minority of short notes), not the legal maxima, which
- * SharedProtocolTest already covers. Deterministic for a given seed.
+ * SharedProtocolTest already covers. Definitions are fixed per seed; region task ids are random and row states are assigned in
+ * set iteration order, so individual rows differ between runs while the distribution (and payload size, within bytes) does not.
  */
-final class Phase5AProfile {
-    static final int MATERIALS = 2000, REGIONS = 2000, PARTICIPANTS = 20;
-    final SharedManifest.Definition definition;
-    final List<UUID> participants;
-    final UUID owner;
+public final class Phase5AProfile {
+    public static final int MATERIALS = 2000, REGIONS = 2000, PARTICIPANTS = 20;
+    public final SharedManifest.Definition definition;
+    public final List<UUID> participants;
+    public final UUID owner;
 
-    Phase5AProfile(long seed) {
+    public Phase5AProfile(long seed) {
         Random random = new Random(seed);
         Map<MaterialTaskId, Long> materials = new HashMap<>();
         String[] words = {"stone", "polished_blackstone_bricks", "oak_planks", "deepslate_tiles", "white_concrete", "glass_pane", "spruce_log", "mud"};
@@ -32,16 +33,16 @@ final class Phase5AProfile {
     }
 
     /** 1 administrator, 17 members and 2 viewers. */
-    Map<UUID, ProjectRole> members() {
+    public Map<UUID, ProjectRole> members() {
         Map<UUID, ProjectRole> members = new HashMap<>();
         for (int i = 0; i < participants.size(); i++)
             members.put(participants.get(i), i == 0 ? ProjectRole.ADMINISTRATOR : i >= participants.size() - 2 ? ProjectRole.VIEWER : ProjectRole.MEMBER);
         return members;
     }
-    List<UUID> writers() { return participants.subList(0, participants.size() - 2); }
+    public List<UUID> writers() { return participants.subList(0, participants.size() - 2); }
 
     /** A mid-project snapshot: about 30% done, 20% assigned and 10% with a short mixed-script note. */
-    ProjectSnapshot progressed(ProjectScope scope, long seed) {
+    public ProjectSnapshot progressed(ProjectScope scope, long seed) {
         Random random = new Random(seed);
         SharedManifest manifest = SharedManifest.initial(definition); Map<TaskId, TaskState> rows = new HashMap<>();
         for (TaskId id : manifest.taskIds()) {
