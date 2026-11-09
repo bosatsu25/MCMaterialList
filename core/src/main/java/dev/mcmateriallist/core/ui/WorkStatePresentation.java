@@ -42,7 +42,7 @@ public final class WorkStatePresentation {
     private static final Set<String> SYNCING = Set.of("loading", "saving", "negotiating", "discovering", "creating", "joining",
         "saving_intent", "awaiting_result", "checking_source", "definition_requested", "permissions_requested", "permissions_saved",
         "join_required", "unknown_outcome", "recovered_uncertain", "request_unknown", "state_changed", "selection_changed",
-        "result.OK", "result.CONFLICT", "unshare.unresolved_operations", "unshare.recovered_uncertain", "unshare.join_required",
+        "result.OK", "unshare.unresolved_operations", "unshare.recovered_uncertain", "unshare.join_required",
         "unshare.refresh_required", "unshare.saving", "unshare.state_changed");
     private static final Set<String> DEFINITION = Set.of("baseline_mismatch", "definitions_mismatch", "source_reload_required",
         "source_edited", "full_recount_required");
@@ -64,6 +64,7 @@ public final class WorkStatePresentation {
         // unreadable source could not be verified at all, so it needs action rather than claiming a difference.
         if (DEFINITION.contains(key) || key.equals("source.CHANGED")) return State.DEFINITION_MISMATCH;
         if (SAVE_FAILURE.contains(key) || key.startsWith("storage.")) return State.SAVE_FAILURE;
+        // A settled CONFLICT has no request left to wait for: the user must synchronize and retry (falls through).
         return State.ACTION_REQUIRED;
     }
 }

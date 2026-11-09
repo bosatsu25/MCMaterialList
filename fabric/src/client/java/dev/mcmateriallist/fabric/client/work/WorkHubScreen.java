@@ -33,6 +33,7 @@ public final class WorkHubScreen extends GuiBase {
     private String built = "";
     private int textBottom;
     private boolean rebuilding;
+    private long builtAt;
     private record Action(ButtonGeneric button, String label, BooleanSupplier enabled, Supplier<String> reason) {}
     private record Spec(String label, BooleanSupplier enabled, Supplier<String> reason, Runnable run) {}
     private record Line(String text, int color) {}
@@ -56,7 +57,7 @@ public final class WorkHubScreen extends GuiBase {
         actions.clear();
         if (materials != null) materials.location().ensure();
         List<Spec> specs = specs();
-        built = signature(specs);
+        built = signature(specs); builtAt = System.nanoTime();
         int width = Math.min(150, (getScreenWidth() - 28) / 2), rows = (specs.size() + 1) / 2;
         int top = getScreenHeight() - 30 - rows * 24;
         textBottom = top - 4;
@@ -141,7 +142,10 @@ public final class WorkHubScreen extends GuiBase {
     @Override protected void drawContents(GuiContext ctx, int mouseX, int mouseY, float ticks) {
         super.drawContents(ctx, mouseX, mouseY, ticks);
         refreshActions();
-        if (!rebuilding && !built.equals(signature(specs()))) {
+        // A running stock scan changes its label with every report; rebuild at most four times a second then, like the
+        // native material screen does.
+        if (!rebuilding && !built.equals(signature(specs()))
+            && (!dev.mcmateriallist.fabric.client.stock.StockClient.scanning() || System.nanoTime() - builtAt > 250_000_000L)) {
             rebuilding = true;
             mc.schedule(() -> { rebuilding = false; if (mc.gui.screen() == this) initGui(); });
         }

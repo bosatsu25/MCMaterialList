@@ -123,6 +123,8 @@ public final class RegionWorkSession {
     }
     /** Issue #22: the state the MCMaterialList screen shows, from the same branches as feedback(). */
     public dev.mcmateriallist.core.ui.WorkStatePresentation.State state() {
+        // No saved, unique placement identity: the user must fix the placement, not the storage.
+        if (placement == null) return dev.mcmateriallist.core.ui.WorkStatePresentation.State.ACTION_REQUIRED;
         if (shared.loading() || shared.selected()) return dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
         if (detached()) return pending || shared.pending() ? dev.mcmateriallist.core.ui.WorkStatePresentation.State.SYNCING
             : dev.mcmateriallist.core.ui.WorkStatePresentation.ofSharedReason(shared.reasonKey());
@@ -136,12 +138,14 @@ public final class RegionWorkSession {
      * editing is blocked: a detached copy could be hidden in that metadata (#11 strict default).
      */
     public String stateReason() {
+        if (placement == null) return dev.mcmateriallist.fabric.client.shared.SharedWorkBackend.text("placement_unavailable");
         if (!shared.loading() && !shared.selected() && !detached() && shared.metadataBlocked()
             && !shared.reasonKey().equals("placement_unavailable")) return text("metadata_blocked", shared.feedback());
         return feedback();
     }
     /** The next step where the reason text does not already name one; null otherwise. */
     public String nextAction() {
+        if (placement == null) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.region_waiting");
         if (shared.loading() || shared.selected() || detached() || shared.metadataBlocked() || pending) return null;
         if (status == StoreStatus.RECOVERY_REQUIRED) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.recover");
         if (status == StoreStatus.CONFLICT) return dev.mcmateriallist.fabric.client.work.WorkHubScreen.text("next_action.conflict");

@@ -37,6 +37,7 @@ class WorkStatePresentationTest {
             Map.entry("placement_capacity", State.ACTION_REQUIRED),
             Map.entry("wrong_world", State.ACTION_REQUIRED),
             // A source that could not be read or verified is not a confirmed mismatch.
+            Map.entry("result.CONFLICT", State.ACTION_REQUIRED),
             Map.entry("source.IO_FAILURE", State.ACTION_REQUIRED),
             Map.entry("source.TOO_LARGE", State.ACTION_REQUIRED),
             Map.entry("source.MISSING", State.ACTION_REQUIRED),
