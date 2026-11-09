@@ -191,6 +191,60 @@ tasks.register('verifyUnshare') {
     }
 }
 
+// Issue #34 (Phase 5G): Phase 4 paths that had no real-client test. The singleplayer markers are checked in the first client
+// process, before the fresh restore process replaces latest.log; the Phase 4 gates then also require that process's
+// confirmation, the dedicated-server Location File markers and the shared native UI markers. Nothing above is relaxed.
+def phase5gFirstProcess = ['Phase 5G location shulker dropper dispenser PASS', 'Phase 5G location unloaded refusal PASS',
+    'Phase 5G location bind unbind PASS', 'Phase 5G stock fallback without channel PASS', 'Phase 5G stock containers and CHANGED PASS',
+    'Phase 5G stock grant revoke buttons PASS', 'Phase 5G stock grant file recovery PASS', 'Phase 5G stock cancel midway PASS',
+    'Phase 5G coverage assertions PASS']
+tasks.named('runClientGameTest') {
+    doLast {
+        def log = layout.buildDirectory.file('run/clientGameTest/logs/latest.log').get().asFile
+        def text = log.exists() ? log.text : ''
+        phase5gFirstProcess.each { marker -> if (!text.contains(marker)) throw new GradleException("Phase 5G coverage did not reach: ${marker}") }
+    }
+}
+def phase5gRestored = { ->
+    def log = layout.buildDirectory.file('run/clientGameTest/logs/latest.log').get().asFile
+    def started = tasks.named('runClientGameTestRestore').get().ext.restoreStartedMillis
+    if (!log.exists() || log.lastModified() < started || !log.text.contains('Phase 5G coverage restore PASS')
+        || log.text.contains('Client gametests failed with an exception')) {
+        throw new GradleException('Phase 5G coverage was not confirmed by the current fresh restore process; inspect the client gametest log.')
+    }
+}
+def phase5gConsoles = { required ->
+    def consoles = layout.buildDirectory.dir('run/multiplayer/consoles').get().asFile
+    required.each { role, markers ->
+        def console = new File(consoles, role + '.log')
+        if (!console.exists()) throw new GradleException("Multiplayer ${role} console log is missing.")
+        def text = console.text
+        markers.each { marker -> if (!text.contains(marker)) throw new GradleException("Multiplayer ${role} did not reach: ${marker}") }
+    }
+}
+def phase5gSharedUi = { markers ->
+    def log = layout.buildDirectory.file('run/sharedUiTest/logs/latest.log').get().asFile
+    def started = tasks.named('runSharedUiTest').get().ext.sharedUiStartedMillis
+    if (!log.exists() || log.lastModified() < started) throw new GradleException('The shared native UI run produced no current log.')
+    def text = log.text
+    markers.each { marker -> if (!text.contains(marker)) throw new GradleException("Shared native UI did not reach: ${marker}") }
+}
+tasks.named('verifyLocationFiles') {
+    // Location Files on a dedicated server: created, registered by look, bound, and the same world after a server restart.
+    dependsOn 'verifyMultiplayer'
+    doLast {
+        phase5gRestored()
+        phase5gConsoles([alpha: ['Multiplayer alpha location file dedicated server PASS', 'Multiplayer alpha location file restart PASS']])
+    }
+}
+tasks.named('verifyStockScan') { doLast { phase5gRestored() } }
+tasks.named('verifyUnshare') {
+    doLast {
+        phase5gSharedUi(['Shared native UI unreadable sharing metadata PASS', 'Shared native UI placement capacity PASS',
+            'Shared native UI refused unshare save PASS'])
+    }
+}
+
 sourceSets {
     serverSmoke {
         compileClasspath += sourceSets.main.compileClasspath
@@ -460,6 +514,8 @@ tasks.named('runSharedUiTest') {
         }
     }
 }
+// Issue #34 / AC-12: a server-side save failure of a shared edit is presented to the client as such, and a retry succeeds.
+tasks.named('runSharedUiTest') { doLast { phase5gSharedUi(['Shared native UI server save failure PASS']) } }
 
 // Issue #8: two real client processes and one separate dedicated-server process. Test-only; excluded from the JAR.
 sourceSets {

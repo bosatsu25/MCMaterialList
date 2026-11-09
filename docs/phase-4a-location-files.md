@@ -53,4 +53,15 @@ Limits: 512 containers per profile, 256 profiles per world, display names of 1-6
 - First process: the material list shows **Location File: (none)**; profiles `taichi_ms` and `../evil` are created through the real form, and only UUID-named files exist. Real placed blocks are aimed at and added: a chest, one double chest half (stored at its smaller position), a barrel and a hopper are accepted; the other double chest half is a duplicate; stone and an ender chest are refused; looking at the sky is refused. A position is removed and the profile is renamed. In the nether, adding to the overworld profile is refused without a write. `materials.json` and `.litematic` bytes are unchanged, and a reopened list reads the same current profile without rewriting it.
 - Fresh restore process: the same profile and `current.json` bytes, current selection, name, generation and positions are read back unchanged; a different world resolves to another identity and lists no profiles.
 
-Not covered: binding through a shared project in the client gametest (core tests cover bind/unbind rules), the unloaded-chunk refusal in a real client, shulker boxes, droppers and dispensers in the client gametest, multiplayer servers other than the integrated server, and container contents.
+Issue #34 (Phase 5G) added real-client tests for the paths listed as not covered before. `verifyLocationFiles` now also requires the fresh-process confirmation `Phase 5G coverage restore PASS`, and it depends on `verifyMultiplayer` for the dedicated-server markers.
+
+| Path | Test | Log marker |
+|---|---|---|
+| Bind to the list's own shared project, Unbind, bind again, each durable | `Phase5GCoverageClientTest` (the material list is shared first; then the real Bind / Unbind controls of the edit screen) | `Phase 5G location bind unbind PASS` |
+| Registration refused when the block's chunk is not loaded | `Phase5GCoverageClientTest`: a look the game produced while the chest was loaded is used after the player moved 4000 blocks away and the chunk unloaded on the client; Add is refused with "not loaded" and the profile is not written | `Phase 5G location unloaded refusal PASS` |
+| Placed shulker box, dropper and dispenser | `Phase5GCoverageClientTest`, real Add control on real placed blocks | `Phase 5G location shulker dropper dispenser PASS` |
+| Dedicated server (not the integrated one) | `MultiplayerClientTest` alpha: the world identity is the server's negotiated namespace (the shared project's world); the looked-at chest passes the click-time validation; the profile is created, made current, given the chest and bound through the real client service; after the server restart the same world resolves and the same current profile is read | `Multiplayer alpha location file dedicated server PASS`, `Multiplayer alpha location file restart PASS` |
+
+The unloaded-chunk case cannot happen through ordinary aiming, because reach is far shorter than the loaded radius. The test therefore reuses a hit result the game itself produced, put back with no client tick between it and the press. The dedicated-server case drives the service rather than the edit screen, because the multiplayer harness has no screen accessors; the screens are the same code on both kinds of server.
+
+Still not covered: container contents (they belong to Check Materials).

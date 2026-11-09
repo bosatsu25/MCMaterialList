@@ -235,6 +235,8 @@ public final class SharedUiClientTest implements FabricClientGameTest {
           }
           // Issue #11 on its own fixture and connections, before closed admission leaves an unknown original behind.
           SharedUiUnshareChecks.run(context, server);
+          // Issue #34: unreadable metadata, the open-placement limit and refused saves, also on their own fixtures and connection.
+          SharedUiCoverageChecks.run(context, server);
           if (SharedUiRaceChecks.enabled("admission")) SharedUiRaceChecks.closedAdmission(context, server);
         }
         SharedSourceLoading.shutdown();

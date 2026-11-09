@@ -73,6 +73,9 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
     private ClientGameTestContext context;
     private UUID actor;
     private BlockPos stockChest;
+    /** Issue #34: alpha's dedicated-server Location File, read back after the server restart. */
+    private dev.mcmateriallist.core.location.WorldIdentity locationWorld;
+    private LocationProfile locationProfile;
 
     private record Sent(SharedCommand command, SharedEvents.CommandResult result) {}
 
@@ -160,6 +163,7 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
         var again = replay(done.command());
         check(again.equals(done.result()), "Replay after restart did not return the original outcome: " + again);
         check(before.equals(fingerprint(snapshot())), "Replay after restart executed the operation again");
+        locationAfterRestart();
         mark("alpha-restarted", "");
         awaitFile("beta-restarted");
 
@@ -310,6 +314,45 @@ public final class MultiplayerClientTest implements FabricClientGameTest {
         mark("stock-granted", "");
         awaitFile("beta-stock-checked");
         LOG.info("Multiplayer alpha stock operator read and grant PASS");
+        locationAlpha(scope, base, chest);
+    }
+    /**
+     * Issue #34, alpha on the dedicated server: a Location File belongs to the server's negotiated world namespace (the shared
+     * project's world), the looked-at chest is accepted by the same click-time validation as the edit screen, and the profile
+     * is created, made current, given the chest and bound to the project through the real client service.
+     */
+    private void locationAlpha(ProjectScope scope, BlockPos base, BlockPos chest) {
+        var service = dev.mcmateriallist.fabric.client.MCMaterialListClient.locations();
+        var world = context.computeOnClient(client -> LocationWorld.resolve() instanceof LocationWorld.Available now ? now.world() : null);
+        check(world != null && world.namespace().equals(scope.worldNamespace()), "Dedicated-server Location File world is not the shared world: " + world);
+        command("tp McmlAlpha " + (chest.getX() + 0.5) + " " + (chest.getY() + 1) + " " + (chest.getZ() + 0.5) + " 0 90");
+        until("alpha looking at the stock chest", client -> client.hitResult instanceof BlockHitResult hit && hit.getBlockPos().equals(chest));
+        var look = context.computeOnClient(client -> dev.mcmateriallist.fabric.client.location.LookedAtContainer.capture());
+        check(look instanceof dev.mcmateriallist.fabric.client.location.LookedAtContainer.Target target && target.position().equals(chestPosition(chest)),
+            "Click-time validation did not accept the looked-at chest on the dedicated server: " + look);
+        var created = service.create(world, OVERWORLD, "multiplayer location").orTimeout(30, java.util.concurrent.TimeUnit.SECONDS).join();
+        check(created.outcome() == dev.mcmateriallist.core.location.LocationOutcome.CHANGED && created.storage().ok(), "Location File creation failed: " + created.outcome());
+        var profile = created.storage().value();
+        var selected = service.select(world, profile.id()).orTimeout(30, java.util.concurrent.TimeUnit.SECONDS).join();
+        check(selected.selection().ok(), "Selecting the dedicated-server Location File failed: " + selected.outcome());
+        var added = service.addContainer(world, profile.id(), profile.generation(), OVERWORLD,
+            ((dev.mcmateriallist.fabric.client.location.LookedAtContainer.Target) look).position()).orTimeout(30, java.util.concurrent.TimeUnit.SECONDS).join();
+        check(added.outcome() == dev.mcmateriallist.core.location.LocationOutcome.CHANGED && added.storage().ok(), "Adding the looked-at chest failed: " + added.outcome());
+        var bound = service.bind(world, profile.id(), added.storage().value().generation(), scope).orTimeout(30, java.util.concurrent.TimeUnit.SECONDS).join();
+        check(bound.outcome() == dev.mcmateriallist.core.location.LocationOutcome.CHANGED && bound.storage().ok()
+            && scope.equals(bound.storage().value().binding()), "Binding to the dedicated server's shared project failed: " + bound.outcome());
+        locationWorld = world; locationProfile = bound.storage().value();
+        command("tp McmlAlpha " + (base.getX() + 0.5) + " " + base.getY() + " " + (base.getZ() + 0.5));
+        LOG.info("Multiplayer alpha location file dedicated server PASS");
+    }
+    /** Issue #34: after the dedicated server restarted, the same world identity resolves and the same current profile is read. */
+    private void locationAfterRestart() {
+        var world = context.computeOnClient(client -> LocationWorld.resolve() instanceof LocationWorld.Available now ? now.world() : null);
+        check(locationWorld != null && locationWorld.equals(world), "The restarted dedicated server resolved another Location File world: " + world);
+        var current = dev.mcmateriallist.fabric.client.MCMaterialListClient.locations().current(world).orTimeout(30, java.util.concurrent.TimeUnit.SECONDS).join();
+        check(current.selection().ok() && current.profile() != null && current.profile().ok() && locationProfile.equals(current.profile().value()),
+            "The restarted dedicated server did not restore the same current Location File");
+        LOG.info("Multiplayer alpha location file restart PASS");
     }
     /** Issue #10, beta as MEMBER: UNAUTHORIZED without a grant (no content), CHECKED once alpha granted the position. */
     private void stockBetaMember(ProjectScope scope) {
