@@ -45,7 +45,7 @@ JSTQB/ISTQB Foundation Level シラバス v4.0（日本語版）5.1.1 の構成�
 
 ## 2. 前提
 
-- `verifyPhase4` が CI で成功していることを、コード変更の取り込みの前提とする。
+- `verifyRelease`（`verifyPhase4` に配布 JAR・依存ライセンス・翻訳の検査を加えたもの。#13）が CI で成功していることを、コード変更の取り込みの前提とする。
 - テストデータはすべて合成データで、ビルドディレクトリ（Git の管理外）に置く。利用者のデータとして配布しない。
 - core の JUnit はネットワークや Minecraft なしで実行でき、時刻・ナノ秒・ファイル書き込みの失敗を注入できる。
 
@@ -66,7 +66,7 @@ JSTQB/ISTQB Foundation Level シラバス v4.0（日本語版）5.1.1 の構成�
 | 手段 | 頻度 | 内容 |
 |---|---|---|
 | GitHub Issue / PR | 変更ごと | テスト結果、CI のリンク、欠陥の報告と修正 |
-| CI の成果物（`phase-4a-test-evidence`） | push / PR ごと | core の JUnit XML、JaCoCo レポート、スクリーンショット、各ゲートのログ |
+| CI の成果物（`phase-4a-test-evidence`、成功時は `application-jar`） | push / PR ごと | core の JUnit XML、JaCoCo レポート、スクリーンショット、各ゲートのログ。成功したコミットの配布 JAR |
 | テスト進捗レポート | Phase ごと、またはリリース候補ごと | §11 のメトリクス |
 | テスト完了レポート | テストレベルの完了時、リリース前 | §12 のテンプレート |
 
@@ -124,7 +124,7 @@ JSTQB/ISTQB Foundation Level シラバス v4.0（日本語版）5.1.1 の構成�
 | 非機能：使用性 | 重なり、日本語、GUI 倍率、理由の表示 | クライアントテストの幾何検査、探索的テスト CH-03 / CH-06 |
 | 非機能：セキュリティ | 権限、入力上限、パスの安全性 | DT-P、BV、ストアのパス検査（シンボリックリンク、`../`） |
 | 確認テスト | 修正した欠陥を再現したテストが合格すること | 欠陥ごとに再現テストを追加してから修正する（既存の運用） |
-| リグレッションテスト | 既存機能が壊れていないこと | `verifyPhase4` が Phase 0〜4 のすべてのゲートを含む。CI が push / PR ごとに実行 |
+| リグレッションテスト | 既存機能が壊れていないこと | `verifyPhase4` が Phase 0〜4 のすべてのゲートを含み、`verifyRelease` がそれに配布 JAR の検査を加える。CI が push / PR ごとに `verifyRelease` を実行 |
 | ホワイトボックス | core のステートメント・ブランチカバレッジ | JaCoCo（`jacocoTestReport`、しきい値なし。数値は CI から記録） |
 
 ### 6.3 領域ごとの技法
@@ -145,7 +145,7 @@ JSTQB/ISTQB Foundation Level シラバス v4.0（日本語版）5.1.1 の構成�
 ### 6.5 テストデータと環境
 
 - 合成の設計図・ワールド・アカウント。参照画像の行（4/19、5/62）は合成データで再現する。
-- CI：GitHub Actions、ubuntu-24.04、Microsoft OpenJDK 25、`xvfb-run`。
+- CI：GitHub Actions、ubuntu-24.04、Microsoft OpenJDK 25、`xvfb-run`。OS ごとの確認範囲は [platform-verification.md](platform-verification.md)（macOS は未確認）。
 - 受入：対象サーバー（Fabric、MOD 導入済み）、Windows / Linux の実クライアント、認証済みアカウント 2〜3。
 
 ## 7. 開始基準と終了基準（5.1.3）
@@ -159,7 +159,7 @@ JSTQB/ISTQB Foundation Level シラバス v4.0（日本語版）5.1.1 の構成�
 
 ### 7.1 リリースの完了の定義（Definition of Done）
 
-1. `./gradlew clean build` と `verifyPhase4 -PacceptMinecraftEula=true` がリリース対象のコミットで CI 成功している。
+1. `./gradlew clean build` と `verifyRelease -PacceptMinecraftEula=true`（`verifyPhase4` を含む）がリリース対象のコミットで CI 成功している。
 2. core のテストが失敗 0、スキップ 0。JaCoCo のレポートが成果物にある（しきい値は未設定。数値を記録する）。
 3. [test-traceability.md](test-traceability.md) が最新で、すべての AC に自動または手動の根拠がある。「ギャップ」は解消済みか、残存リスクとして所有者が受容している。
 4. 受入テスト（#15）を実施し、テスト完了レポートを所有者が承認している。未実施でリリースする場合は、その旨と理由を README とリリースノートに書く。

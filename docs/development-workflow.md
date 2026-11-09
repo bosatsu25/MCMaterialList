@@ -22,5 +22,6 @@ This page records how changes reach `main`. It was written for #35 on 2026-11-09
   - Expect the first CI run to be the first compile.
 
 ## Version
-- `mod_version` in `gradle.properties` stays at the intermediate `0.1.0-phase.3a` until the release preparation in #15. That step sets the release version, and the JAR name, `fabric.mod.json`, README and release notes all follow it.
+- `mod_version` in `gradle.properties` was the intermediate `0.1.0-phase.3a` until the release preparation in #15, which set it to `0.1.0`. The JAR name (`fabric-0.1.0.jar`), the `fabric.mod.json` version (checked by `verifyApplicationJar`), README and the release notes follow it.
+- The next release changes `mod_version`, `CHANGELOG.md` and its release notes together in its own release preparation.
 - Do not change the version in a feature pull request.

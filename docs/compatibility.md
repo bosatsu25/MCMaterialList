@@ -15,7 +15,7 @@ Only this exact combination is tested. Nothing else is claimed.
 | MaLiLib | 0.29.2 (Modrinth `52cWF5Da`) | `suggests: "=0.29.2"` (client only, optional) | `Compatibility.isSupported()` exact version string | `malilib_version`; same check |
 | Java | 25 (hosted CI: Microsoft OpenJDK 25 via `actions/setup-java`; Phase 0: Microsoft OpenJDK 25.0.4+7) | `depends: "java": ">=25"` | Fabric Loader | Gradle toolchain and `options.release = 25` |
 | Build only | Gradle 9.7.1, Loom 1.17.20 | - | - | wrapper, `fabric/build.gradle` |
-| Platforms with evidence | Hosted Ubuntu 24.04 with `xvfb-run` (every gate); Windows for the Phase 0-2 local runs | - | - | `.github/workflows/phase-0.yml` |
+| Platforms with evidence | Hosted Ubuntu 24.04 with `xvfb-run` (every gate, `verifyRelease`); Windows for the Phase 0-2 local runs; macOS not verified ([platform-verification.md](platform-verification.md)) | - | - | `.github/workflows/phase-0.yml` |
 
 Notes:
 
@@ -136,7 +136,7 @@ Defects fixed by this audit (writes were already refused in every case):
 | A queued `TaskCountBlocksPlacement` means the material list is stale | `MATERIALS_BUSY` | A stale list could be captured | `Phase1ClientTest.verifyReadiness` |
 | The material name is the 5th `drawString` in `WidgetMaterialListEntry.render` | Name clamp (`@ModifyArg` ordinal 4) | Wrong text clamped | `Phase2ClientTest` geometry and screenshots |
 | A `BLOCK` hit result is always within the player's interaction range | Location File registration (`LookedAtContainer`) | Out-of-reach registration | `Phase4LocationClientTest` registers the looked-at block; reach itself: inspection |
-| On the client, `Level.hasChunkAt` is not trusted to report an unloaded chunk: it stayed true for 2400 ticks after a 4000-block teleport (hosted run 42686987162). The client chunk cache, asked with `ChunkSource.getChunk(x, z, false)`, is the source of truth | `LookedAtContainer.loaded` (the `not_loaded` refusal) | A look at a block in an unloaded chunk could be registered | `Phase5GCoverageClientTest` unloaded refusal, which logs both answers (`Phase 5G client chunk state after leaving`) |
+| On the client, `Level.hasChunkAt` is not trusted to report an unloaded chunk: it stayed true for 2400 ticks after a 4000-block teleport (hosted run 42686987162), while the cache had dropped the chunk (run 42689396105: `cache=false levelHasChunkAt=true`). The client chunk cache, asked with `ChunkSource.getChunk(x, z, false)`, is the source of truth | `LookedAtContainer.loaded` (the `not_loaded` refusal) | A look at a block in an unloaded chunk could be registered | `Phase5GCoverageClientTest` unloaded refusal, which logs both answers (`Phase 5G client chunk state after leaving`) |
 
 ## Upstream API inventory
 
