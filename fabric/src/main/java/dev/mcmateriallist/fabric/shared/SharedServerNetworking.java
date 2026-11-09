@@ -26,10 +26,15 @@ public final class SharedServerNetworking {
     private static final Map<MinecraftServer, Runtime> RUNTIMES = new ConcurrentHashMap<>();
     private static final PacketContext.Key<ServerGamePacketListenerImpl> ATTEMPTED = PacketContext.key(
         Identifier.fromNamespaceAndPath("mcmateriallist", "shared_admission_listener"));
+    private static final org.slf4j.Logger TRACE = org.slf4j.LoggerFactory.getLogger("mcmateriallist");
+    /** Design section 13 traces: ids, intent, result, revision and timing only; routine successes stay at DEBUG. */
+    private static final SharedDiagnostics.Sink DIAGNOSTICS = trace -> {
+        if (trace.routine()) TRACE.debug("{}", trace.format()); else TRACE.info("{}", trace.format());
+    };
     private SharedServerNetworking() {}
     public static void initialize() {
         ServerLifecycleEvents.SERVER_STARTING.register(server -> RUNTIMES.put(server,
-            new Runtime(new SharedProjectService(new SharedProjectStore(server.getWorldPath(LevelResource.ROOT))))));
+            new Runtime(new SharedProjectService(new SharedProjectStore(server.getWorldPath(LevelResource.ROOT)), DIAGNOSTICS))));
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             Runtime runtime = RUNTIMES.get(server); if (runtime != null) runtime.stop();
         });
