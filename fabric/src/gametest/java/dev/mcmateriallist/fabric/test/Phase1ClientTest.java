@@ -56,11 +56,13 @@ public final class Phase1ClientTest implements FabricClientGameTest {
             WorkSnapshot snapshot = context.computeOnClient(mc -> PlacementWorkAdapter.capture(placement, materials).snapshot());
             check(snapshot != null && snapshot.materials().size() == 3 && snapshot.regions().size() == 3, "Real adapter snapshot failed");
             context.setScreen(() -> new GuiMaterialList(materials));
-            verifyDiagnostic(context, "phase1-material-diagnostic");
+            verifyDiagnostic(context, "phase1-material-diagnostic", snapshot.placementId());
             var cached = context.computeOnClient(mc -> placement.getMaterialList());
             context.waitFor(mc -> cached.getMaterialsAll().size() == 3 && PlacementWorkAdapter.capture(placement, cached).status() == PlacementWorkAdapter.Status.OK);
             context.setScreen(() -> new GuiPlacementConfiguration(placement));
-            verifyDiagnostic(context, "phase1-region-diagnostic");
+            verifyDiagnostic(context, "phase1-region-diagnostic", snapshot.placementId());
+            // Issue #22: on both screens Shift-click wrote nothing without the developer flag, and ran the diagnostic with it.
+            org.slf4j.LoggerFactory.getLogger("mcmateriallist").info("Phase 5E diagnostic requires explicit flag PASS");
             context.setScreen(() -> null);
             UUID actor = UUID.randomUUID(); MaterialTaskId stone = new MaterialTaskId("minecraft:stone");
             try (var service = new LocalWorkService(root.resolve("data"))) {
@@ -162,8 +164,42 @@ public final class Phase1ClientTest implements FabricClientGameTest {
         });
     }
     private record Counting(MaterialListPlacement materials, CountTaskTestAccess task) {}
-    private static void verifyDiagnostic(ClientGameTestContext context, String screenshot) {
+    /**
+     * Issue #22: the Phase 1 diagnostic creates/refreshes both local datasets, so it is a developer tool. Without
+     * -Dmcmateriallist.diagnostics=true a Shift-click is an ordinary click: it opens the MCMaterialList screen and writes
+     * nothing. With the flag (set here explicitly, as a developer would on the JVM command line) it still runs.
+     */
+    private static void verifyDiagnostic(ClientGameTestContext context, String screenshot, dev.mcmateriallist.core.LocalPlacementId id) {
         GuiBase screen = context.computeOnClient(mc -> (GuiBase) mc.gui.screen());
+        check(!dev.mcmateriallist.fabric.client.litematica.FooterEntry.diagnosticsEnabled(), "Gametest client started with developer diagnostics enabled");
+        var before = stored(context, id);
+        shiftClickFooter(context, screen);
+        context.waitForScreen(dev.mcmateriallist.fabric.client.work.WorkHubScreen.class);
+        context.setScreen(() -> screen);
+        context.runOnClient(mc -> check(((MessageRendererTestAccess) ((GuiBaseTestAccess) screen).phase0MessageRenderer()).phase0Messages().stream()
+            .noneMatch(message -> String.join(" ", ((MessageTestAccess) message).phase0Lines()).contains("MCMaterialList Phase 1")),
+            "Shift-click without the developer flag ran the diagnostic"));
+        check(stored(context, id).equals(before), "Shift-click without the developer flag changed local work");
+        System.setProperty(dev.mcmateriallist.fabric.client.litematica.FooterEntry.DIAGNOSTICS_PROPERTY, "true");
+        try {
+            shiftClickFooter(context, screen);
+            waitForDiagnostic(context, screen);
+        } finally {
+            System.clearProperty(dev.mcmateriallist.fabric.client.litematica.FooterEntry.DIAGNOSTICS_PROPERTY);
+        }
+        context.takeScreenshot(screenshot);
+    }
+    private static java.util.List<StoreResult> stored(ClientGameTestContext context, dev.mcmateriallist.core.LocalPlacementId id) {
+        var results = new java.util.ArrayList<StoreResult>();
+        for (DatasetKind kind : DatasetKind.values()) {
+            var future = context.computeOnClient(mc -> dev.mcmateriallist.fabric.client.MCMaterialListClient.work().load(id, kind));
+            try { results.add(future.get(10, java.util.concurrent.TimeUnit.SECONDS)); }
+            catch (InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
+            catch (ExecutionException | java.util.concurrent.TimeoutException failure) { throw new AssertionError("Local work could not be read", failure); }
+        }
+        return results;
+    }
+    private static void shiftClickFooter(ClientGameTestContext context, GuiBase screen) {
         var button = context.computeOnClient(mc -> ((GuiBaseTestAccess) screen).phase0Buttons().stream().filter(candidate -> "MCMaterialList".equals(ChatFormatting.stripFormatting(((ButtonTestAccess) candidate).phase0Text()))).findFirst().orElseThrow());
         double[] cursor = context.computeOnClient(mc -> new double[]{
             (button.getX() + button.getWidth() / 2.0) * mc.getWindow().getScreenWidth() / mc.getWindow().getGuiScaledWidth(),
@@ -171,6 +207,8 @@ public final class Phase1ClientTest implements FabricClientGameTest {
         });
         context.getInput().setCursorPos(cursor[0], cursor[1]); context.getInput().holdShift(); context.waitTick();
         context.getInput().pressMouse(GLFW.GLFW_MOUSE_BUTTON_LEFT); context.getInput().releaseShift();
+    }
+    private static void waitForDiagnostic(ClientGameTestContext context, GuiBase screen) {
         context.waitFor(mc -> {
             var renderer = ((GuiBaseTestAccess) screen).phase0MessageRenderer();
             return ((MessageRendererTestAccess) renderer).phase0Messages().stream().anyMatch(message -> {
@@ -178,7 +216,6 @@ public final class Phase1ClientTest implements FabricClientGameTest {
                 return text.contains("MCMaterialList Phase 1") && text.contains("materials") && text.contains("regions") && text.contains("0/3");
             });
         });
-        context.takeScreenshot(screenshot);
     }
     private static void verifyReadiness(SchematicPlacement placement) {
         var list = new MaterialListPlacement(placement, false);
