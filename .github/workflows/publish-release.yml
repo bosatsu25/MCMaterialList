@@ -1,0 +1,76 @@
+name: Publish release (attach the JAR a green release-gate run built)
+# Run by hand only. It never builds: it attaches the application-jar artifact of an earlier successful run of the release
+# gate (phase-0.yml) on exactly the commit being tagged, so the published JAR is the one verifyRelease checked.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without the leading v (must equal mod_version at the commit), e.g. 0.1.0
+        required: true
+      commit:
+        description: Full SHA of the commit to tag
+        required: true
+      run_id:
+        description: ID of the successful release-gate run on that commit whose application-jar is attached
+        required: true
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      VERSION: ${{ inputs.version }}
+      COMMIT: ${{ inputs.commit }}
+      RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - name: Check the inputs and the source run
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must be MAJOR.MINOR.PATCH"; exit 1; }
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be a full 40-character SHA"; exit 1; }
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "run_id must be numeric"; exit 1; }
+          run=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '[.head_sha, .conclusion, .path] | join(" ")')
+          echo "source run: $run"
+          [ "$run" = "$COMMIT success .github/workflows/phase-0.yml" ] || { echo "run $RUN_ID is not a successful release-gate run on $COMMIT"; exit 1; }
+          if gh api "repos/$REPO/git/ref/tags/v$VERSION" >/dev/null 2>&1; then echo "tag v$VERSION already exists"; exit 1; fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+      - name: Check the version and the release notes at that commit
+        run: |
+          set -euo pipefail
+          grep -qx "mod_version=$VERSION" gradle.properties || { echo "mod_version at $COMMIT is not $VERSION"; exit 1; }
+          test -s "docs/release-notes-$VERSION.md"
+      - uses: actions/download-artifact@v4
+        with:
+          name: application-jar
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: dist
+      - name: Check the JAR
+        run: |
+          set -euo pipefail
+          ls -l dist
+          [ "$(ls dist)" = "fabric-$VERSION.jar" ] || { echo "expected exactly dist/fabric-$VERSION.jar"; exit 1; }
+          unzip -p "dist/fabric-$VERSION.jar" fabric.mod.json | grep -q "\"version\": *\"$VERSION\"" || { echo "fabric.mod.json version is not $VERSION"; exit 1; }
+          (cd dist && sha256sum "fabric-$VERSION.jar" | tee "fabric-$VERSION.jar.sha256")
+      - name: Create the tag and the release
+        run: |
+          set -euo pipefail
+          gh release create "v$VERSION" "dist/fabric-$VERSION.jar" "dist/fabric-$VERSION.jar.sha256" \
+            --repo "$REPO" --target "$COMMIT" --title "MCMaterialList $VERSION" --notes-file "docs/release-notes-$VERSION.md"
+          gh release view "v$VERSION" --repo "$REPO" --json url,tagName,assets --jq '.url, .tagName, (.assets[] | .name + " " + (.size|tostring))'
+          {
+            echo "Published v$VERSION at $COMMIT from run $RUN_ID"
+            echo
+            echo '```'
+            cat "dist/fabric-$VERSION.jar.sha256"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
