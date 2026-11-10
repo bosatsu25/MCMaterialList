@@ -36,7 +36,8 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must be MAJOR.MINOR.PATCH"; exit 1; }
           [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be a full 40-character SHA"; exit 1; }
           [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "run_id must be numeric"; exit 1; }
-          run=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '[.head_sha, .conclusion, .path] | join(" ")')
+          # .path may carry a ref suffix (".github/workflows/phase-0.yml@main"); compare the file path only.
+          run=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '[.head_sha, .conclusion, (.path | split("@")[0])] | join(" ")')
           echo "source run: $run"
           [ "$run" = "$COMMIT success .github/workflows/phase-0.yml" ] || { echo "run $RUN_ID is not a successful release-gate run on $COMMIT"; exit 1; }
           if gh api "repos/$REPO/git/ref/tags/v$VERSION" >/dev/null 2>&1; then echo "tag v$VERSION already exists"; exit 1; fi
@@ -59,7 +60,8 @@ jobs:
           set -euo pipefail
           ls -l dist
           [ "$(ls dist)" = "fabric-$VERSION.jar" ] || { echo "expected exactly dist/fabric-$VERSION.jar"; exit 1; }
-          unzip -p "dist/fabric-$VERSION.jar" fabric.mod.json | grep -q "\"version\": *\"$VERSION\"" || { echo "fabric.mod.json version is not $VERSION"; exit 1; }
+          modjson=$(unzip -p "dist/fabric-$VERSION.jar" fabric.mod.json)
+          grep -q "\"version\": *\"$VERSION\"" <<<"$modjson" || { echo "fabric.mod.json version is not $VERSION"; exit 1; }
           (cd dist && sha256sum "fabric-$VERSION.jar" | tee "fabric-$VERSION.jar.sha256")
       - name: Create the tag and the release
         run: |
